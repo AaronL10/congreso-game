@@ -1,7 +1,7 @@
 /**
  * server.js — Servidor principal del juego de congreso
- * Stack: Node.js + Express (archivos estáticos) + Socket.io (tiempo real)
- * Compatible con Render.com y cualquier host que use variables de entorno.
+ * Stack: Node.js + Express + Socket.io
+ * Dinámica: botón de cupo → cola de respuesta → puntos por velocidad
  */
 
 const express = require("express");
@@ -9,159 +9,348 @@ const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
 
-// ─── Inicialización ───────────────────────────────────────────────────────────
 const app = express();
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
-  // Aumentar el tiempo de ping para conexiones móviles inestables
   pingTimeout: 60000,
   pingInterval: 25000,
 });
 
 const PORT = process.env.PORT || 3000;
-const MAX_GANADORES = 20;
+const MAX_CUPOS = 20;         // cuántos pueden presionar el botón por pregunta
+const TIEMPO_RESPUESTA = 15;  // segundos para responder una vez que salís de la cola
 
-// ─── Estado Global del Juego ──────────────────────────────────────────────────
-// Toda la lógica de estado vive aquí en memoria.
+// ─── Estado Global ────────────────────────────────────────────────────────────
 let estado = {
-  ronda: "esperando", // "esperando" | "activa" | "terminada"
-  ganadores: [],      // [{ alias, socketId, posicion }]
-  ganadoresSet: new Set(), // Set de socketIds para búsqueda O(1) de duplicados
+  fase: "lobby",          // "lobby" | "boton" | "respondiendo" | "resultado" | "fin"
+  preguntaActual: null,   // { id, texto, opciones: [{letra,texto}], correcta: "A"|"B"|"C"|"D", puntosTotales }
+  preguntaIndex: 0,
+  preguntas: [],          // banco de preguntas cargadas por el host
+  cupos: [],              // [{ alias, socketId, timestamp }] — orden de llegada
+  cuposSet: new Set(),    // para lookup O(1)
+  respondiendo: null,     // { alias, socketId } — quien está respondiendo ahora
+  cola: [],               // cola de quienes presionaron pero esperan turno
+  respuestasEnPregunta: new Set(), // socketIds que ya respondieron (bien o mal) en esta pregunta
+  timerHandle: null,
+  timerInicio: null,
+  puntajes: {},           // { socketId: { alias, puntos, respuestasCorrectas } }
+  historial: [],          // preguntas anteriores con resultados
 };
 
-// ─── Servir Archivos Estáticos ────────────────────────────────────────────────
-app.use(express.static(path.join(__dirname, "public")));
+function resetPregunta() {
+  if (estado.timerHandle) clearTimeout(estado.timerHandle);
+  estado.cupos = [];
+  estado.cuposSet.clear();
+  estado.respondiendo = null;
+  estado.cola = [];
+  estado.respuestasEnPregunta.clear();
+  estado.timerHandle = null;
+  estado.timerInicio = null;
+}
 
-// Rutas explícitas por claridad
+function snapPuntajes() {
+  return Object.values(estado.puntajes)
+    .sort((a, b) => b.puntos - a.puntos)
+    .map((p, i) => ({ ...p, posicion: i + 1 }));
+}
+
+// ─── Temporizador de respuesta ────────────────────────────────────────────────
+function iniciarTimerRespuesta(socketId) {
+  if (estado.timerHandle) clearTimeout(estado.timerHandle);
+  estado.timerInicio = Date.now();
+
+  estado.timerHandle = setTimeout(() => {
+    // Se acabó el tiempo — pasar al siguiente en cola
+    console.log(`[⏰] Tiempo agotado para ${socketId}`);
+    io.emit("tiempo_agotado", { alias: estado.respondiendo?.alias });
+    pasarAlSiguiente();
+  }, TIEMPO_RESPUESTA * 1000);
+}
+
+function pasarAlSiguiente() {
+  if (estado.timerHandle) clearTimeout(estado.timerHandle);
+  estado.timerHandle = null;
+
+  if (estado.cola.length > 0) {
+    const siguiente = estado.cola.shift();
+    // verificar que siga conectado
+    const socketSiguiente = io.sockets.sockets.get(siguiente.socketId);
+    if (!socketSiguiente) {
+      pasarAlSiguiente(); // skip si se desconectó
+      return;
+    }
+    estado.respondiendo = siguiente;
+    console.log(`[→] Turno de: ${siguiente.alias}`);
+
+    io.emit("turno_respondiendo", {
+      alias: siguiente.alias,
+      socketId: siguiente.socketId,
+    });
+    socketSiguiente.emit("tu_turno", {
+      pregunta: estado.preguntaActual,
+      tiempo: TIEMPO_RESPUESTA,
+    });
+    iniciarTimerRespuesta(siguiente.socketId);
+  } else {
+    // Cola vacía — nadie más puede responder esta pregunta
+    estado.respondiendo = null;
+    estado.fase = "resultado";
+    console.log("[!] Cola vacía — mostrando resultado");
+    io.emit("mostrar_resultado", {
+      pregunta: estado.preguntaActual,
+      puntajes: snapPuntajes(),
+      motivo: "sin_respuestas",
+    });
+  }
+}
+
+// ─── Servir archivos estáticos ────────────────────────────────────────────────
+app.use(express.static(path.join(__dirname, "public")));
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 app.get("/host", (req, res) => res.sendFile(path.join(__dirname, "public", "host.html")));
+app.get("/pantalla", (req, res) => res.sendFile(path.join(__dirname, "public", "pantalla.html")));
 
-// ─── Lógica Socket.io ─────────────────────────────────────────────────────────
+// ─── Socket.io ────────────────────────────────────────────────────────────────
 io.on("connection", (socket) => {
   console.log(`[+] Conexión: ${socket.id}`);
 
-  // Al conectarse, enviar el estado actual al nuevo cliente para sincronización
+  // Sincronizar estado al conectarse
   socket.emit("estado_actual", {
-    ronda: estado.ronda,
-    ganadores: estado.ganadores,
+    fase: estado.fase,
+    preguntaActual: estado.fase === "boton" ? { texto: estado.preguntaActual?.texto } : null, // no revelar respuesta
+    puntajes: snapPuntajes(),
+    totalPreguntas: estado.preguntas.length,
+    preguntaIndex: estado.preguntaIndex,
   });
 
-  // ── Evento: Jugador se une con alias ────────────────────────────────────────
+  // ── Jugador: unirse ────────────────────────────────────────────────────────
   socket.on("unirse", ({ alias }) => {
-    // Sanitizar alias: eliminar espacios extra, limitar longitud
-    const aliasSanitizado = String(alias || "")
-      .trim()
-      .slice(0, 30) || `Jugador-${socket.id.slice(0, 4)}`;
-
-    // Guardar alias en el socket para recuperarlo después
+    const aliasSanitizado = String(alias || "").trim().slice(0, 30) || `J-${socket.id.slice(0, 4)}`;
     socket.alias = aliasSanitizado;
-    console.log(`[~] ${socket.id} se unió como "${aliasSanitizado}"`);
 
-    // Confirmar al jugador su ingreso exitoso
+    if (!estado.puntajes[socket.id]) {
+      estado.puntajes[socket.id] = { alias: aliasSanitizado, puntos: 0, respuestasCorrectas: 0, socketId: socket.id };
+    }
+
+    console.log(`[~] "${aliasSanitizado}" se unió`);
     socket.emit("unido", {
       alias: aliasSanitizado,
-      ronda: estado.ronda,
-      ganadores: estado.ganadores,
+      fase: estado.fase,
+      puntajes: snapPuntajes(),
     });
+
+    io.emit("jugador_unido", { alias: aliasSanitizado, total: Object.keys(estado.puntajes).length });
   });
 
-  // ── Evento: Host inicia la ronda ────────────────────────────────────────────
-  socket.on("iniciar_ronda", () => {
-    // Resetear estado para nueva ronda
-    estado.ronda = "activa";
-    estado.ganadores = [];
-    estado.ganadoresSet.clear();
-
-    console.log("[!] Ronda INICIADA por el host");
-
-    // Notificar a TODOS los clientes (jugadores + proyector)
-    io.emit("ronda_iniciada");
-  });
-
-  // ── Evento: Jugador presiona el botón ───────────────────────────────────────
+  // ── Jugador: presionar botón para ganar cupo ───────────────────────────────
   socket.on("presionar_boton", () => {
-    // ① Guardia: solo acepta si la ronda está activa
-    if (estado.ronda !== "activa") {
-      socket.emit("resultado_boton", {
-        exito: false,
-        razon: "La ronda no está activa.",
-      });
+    if (estado.fase !== "boton") {
+      socket.emit("resultado_boton", { exito: false, razon: "El botón no está activo." });
+      return;
+    }
+    if (estado.cuposSet.has(socket.id)) {
+      socket.emit("resultado_boton", { exito: false, razon: "Ya estás en la cola." });
+      return;
+    }
+    if (estado.respuestasEnPregunta.has(socket.id)) {
+      socket.emit("resultado_boton", { exito: false, razon: "Ya respondiste esta pregunta." });
+      return;
+    }
+    if (estado.cupos.length >= MAX_CUPOS) {
+      socket.emit("resultado_boton", { exito: false, razon: "Los cupos están llenos." });
       return;
     }
 
-    // ② Guardia: evitar duplicados del mismo socket
-    if (estado.ganadoresSet.has(socket.id)) {
-      socket.emit("resultado_boton", {
-        exito: false,
-        razon: "Ya fuiste registrado.",
-      });
-      return;
-    }
+    const alias = socket.alias || `J-${socket.id.slice(0, 4)}`;
+    const entrada = { alias, socketId: socket.id, timestamp: Date.now() };
+    estado.cupos.push(entrada);
+    estado.cuposSet.add(socket.id);
 
-    // ③ Guardia: ya tenemos los 20 ganadores
-    if (estado.ganadores.length >= MAX_GANADORES) {
-      estado.ronda = "terminada";
-      socket.emit("resultado_boton", {
-        exito: false,
-        razon: "Los 20 cupos ya fueron llenados.",
-      });
-      return;
-    }
+    const posicion = estado.cupos.length;
+    console.log(`[★] Cupo #${posicion}: "${alias}"`);
 
-    // ✅ Registrar ganador
-    const posicion = estado.ganadores.length + 1;
-    const alias = socket.alias || `Jugador-${socket.id.slice(0, 4)}`;
-    const ganador = { alias, socketId: socket.id, posicion };
+    socket.emit("resultado_boton", { exito: true, posicion });
+    io.emit("actualizar_cupos", { total: estado.cupos.length, max: MAX_CUPOS });
 
-    estado.ganadores.push(ganador);
-    estado.ganadoresSet.add(socket.id);
-
-    console.log(`[★] Posición #${posicion}: "${alias}" (${socket.id})`);
-
-    // Confirmar al jugador que ganó un cupo
-    socket.emit("resultado_boton", {
-      exito: true,
-      posicion,
-      alias,
-    });
-
-    // Actualizar leaderboard en todos los clientes (jugadores + proyector)
-    io.emit("actualizar_ganadores", {
-      ganadores: estado.ganadores,
-      total: estado.ganadores.length,
-    });
-
-    // Si llenamos los 20, cerrar la ronda automáticamente
-    if (estado.ganadores.length >= MAX_GANADORES) {
-      estado.ronda = "terminada";
-      console.log("[✓] Ronda TERMINADA: 20 ganadores registrados.");
-      io.emit("ronda_terminada", { ganadores: estado.ganadores });
+    // Si es el primero en la cola y nadie está respondiendo → darle el turno
+    if (posicion === 1 && !estado.respondiendo) {
+      estado.cola.push(entrada);
+      pasarAlSiguiente();
+    } else {
+      estado.cola.push(entrada);
     }
   });
 
-  // ── Evento: Host reinicia todo ──────────────────────────────────────────────
-  socket.on("reiniciar_todo", () => {
-    estado.ronda = "esperando";
-    estado.ganadores = [];
-    estado.ganadoresSet.clear();
+  // ── Jugador: enviar respuesta ──────────────────────────────────────────────
+  socket.on("responder", ({ letra }) => {
+    if (estado.fase !== "boton") {
+      socket.emit("resultado_respuesta", { exito: false, razon: "Fuera de fase." });
+      return;
+    }
+    if (!estado.respondiendo || estado.respondiendo.socketId !== socket.id) {
+      socket.emit("resultado_respuesta", { exito: false, razon: "No es tu turno." });
+      return;
+    }
 
-    console.log("[↺] Juego REINICIADO por el host");
+    const correcta = estado.preguntaActual.correcta;
+    const esCorrecta = letra === correcta;
 
-    // Notificar a todos los clientes para que vuelvan al estado inicial
+    // Marcar que este socket ya respondió
+    estado.respuestasEnPregunta.add(socket.id);
+    if (estado.timerHandle) clearTimeout(estado.timerHandle);
+
+    let puntosGanados = 0;
+    if (esCorrecta) {
+      // Puntaje según velocidad: más rápido = más puntos
+      const tiempoUsado = (Date.now() - estado.timerInicio) / 1000;
+      const factor = Math.max(0, (TIEMPO_RESPUESTA - tiempoUsado) / TIEMPO_RESPUESTA);
+      puntosGanados = Math.round(1000 * factor) + 500; // base 500 + bonus velocidad
+
+      const reg = estado.puntajes[socket.id];
+      if (reg) {
+        reg.puntos += puntosGanados;
+        reg.respuestasCorrectas += 1;
+      }
+
+      console.log(`[✓] "${socket.alias}" respondió correcto. +${puntosGanados} pts`);
+
+      // Respuesta correcta → mostrar resultado
+      estado.fase = "resultado";
+      io.emit("mostrar_resultado", {
+        correcto: true,
+        alias: socket.alias,
+        letra,
+        correcta,
+        puntosGanados,
+        pregunta: estado.preguntaActual,
+        puntajes: snapPuntajes(),
+      });
+
+    } else {
+      console.log(`[✗] "${socket.alias}" respondió mal (${letra}, correcta: ${correcta})`);
+
+      socket.emit("resultado_respuesta", {
+        correcto: false,
+        letra,
+        correcta: null, // no revelar la correcta todavía
+      });
+
+      // Emitir a todos que falló (sin revelar respuesta)
+      io.emit("respuesta_incorrecta", {
+        alias: socket.alias,
+        letra,
+      });
+
+      // Pasar al siguiente en la cola
+      estado.respondiendo = null;
+      pasarAlSiguiente();
+    }
+  });
+
+  // ── HOST: cargar pregunta nueva ────────────────────────────────────────────
+  socket.on("host_cargar_pregunta", ({ texto, opciones, correcta, index }) => {
+    // opciones: [{ letra: "A", texto: "..." }, ...]
+    const pregunta = {
+      id: Date.now(),
+      texto,
+      opciones,
+      correcta,
+      puntosTotales: 1000,
+    };
+
+    if (index !== undefined && index < estado.preguntas.length) {
+      estado.preguntas[index] = pregunta;
+    } else {
+      estado.preguntas.push(pregunta);
+    }
+
+    console.log(`[Q] Pregunta cargada: "${texto}"`);
+    socket.emit("pregunta_guardada", { total: estado.preguntas.length });
+  });
+
+  // ── HOST: iniciar fase de botón ────────────────────────────────────────────
+  socket.on("host_iniciar_boton", ({ preguntaId }) => {
+    // Buscar la pregunta por id, o tomar la siguiente
+    let pregunta;
+    if (preguntaId) {
+      pregunta = estado.preguntas.find(p => p.id === preguntaId);
+    } else {
+      pregunta = estado.preguntas[estado.preguntaIndex] || null;
+    }
+
+    if (!pregunta) {
+      socket.emit("error_host", { msg: "No hay pregunta disponible. Cargá una primero." });
+      return;
+    }
+
+    resetPregunta();
+    estado.preguntaActual = pregunta;
+    estado.fase = "boton";
+
+    console.log(`[!] Fase BOTÓN iniciada: "${pregunta.texto}"`);
+
+    // A jugadores y pantalla: solo el texto de la pregunta (sin revelar respuesta)
+    io.emit("fase_boton", {
+      pregunta: {
+        texto: pregunta.texto,
+        opciones: pregunta.opciones,
+      },
+      max: MAX_CUPOS,
+    });
+  });
+
+  // ── HOST: pasar a siguiente pregunta ──────────────────────────────────────
+  socket.on("host_siguiente_pregunta", () => {
+    estado.preguntaIndex = (estado.preguntaIndex + 1) % Math.max(1, estado.preguntas.length);
+    resetPregunta();
+    estado.fase = "lobby";
+    io.emit("volver_lobby", { puntajes: snapPuntajes(), preguntaIndex: estado.preguntaIndex });
+  });
+
+  // ── HOST: reiniciar todo ───────────────────────────────────────────────────
+  socket.on("host_reiniciar", () => {
+    resetPregunta();
+    estado.fase = "lobby";
+    estado.preguntaActual = null;
+    estado.preguntaIndex = 0;
+    estado.puntajes = {};
+    estado.historial = [];
+    console.log("[↺] Juego reiniciado");
     io.emit("juego_reiniciado");
   });
 
-  // ── Desconexión ─────────────────────────────────────────────────────────────
+  // ── HOST: eliminar pregunta ────────────────────────────────────────────────
+  socket.on("host_eliminar_pregunta", ({ index }) => {
+    if (index >= 0 && index < estado.preguntas.length) {
+      estado.preguntas.splice(index, 1);
+      socket.emit("preguntas_actualizadas", { preguntas: estado.preguntas.map(p => ({ id: p.id, texto: p.texto })) });
+    }
+  });
+
+  // ── HOST: pedir lista de preguntas ────────────────────────────────────────
+  socket.on("host_pedir_preguntas", () => {
+    socket.emit("lista_preguntas", {
+      preguntas: estado.preguntas,
+      preguntaIndex: estado.preguntaIndex,
+    });
+  });
+
+  // ── Desconexión ────────────────────────────────────────────────────────────
   socket.on("disconnect", (razon) => {
     console.log(`[-] Desconexión: ${socket.id} (${razon})`);
-    // No se elimina al ganador del leaderboard si ya ganó:
-    // el registro es permanente para esa ronda.
+
+    // Si era quien estaba respondiendo → pasar al siguiente
+    if (estado.respondiendo?.socketId === socket.id) {
+      estado.respondiendo = null;
+      pasarAlSiguiente();
+    }
   });
 });
 
-// ─── Arrancar Servidor ────────────────────────────────────────────────────────
+// ─── Arrancar servidor ────────────────────────────────────────────────────────
 httpServer.listen(PORT, () => {
-  console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
-  console.log(`   Host:        http://localhost:${PORT}/host`);
-  console.log(`   Participante: http://localhost:${PORT}/`);
+  console.log(`✅ Servidor en http://localhost:${PORT}`);
+  console.log(`   Jugadores:  http://localhost:${PORT}/`);
+  console.log(`   Host:       http://localhost:${PORT}/host`);
+  console.log(`   Pantalla:   http://localhost:${PORT}/pantalla`);
 });

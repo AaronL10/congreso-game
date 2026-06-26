@@ -1,696 +1,518 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Host — Panel de Control</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Congreso — Panel Host</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f0f1a; --surface: #1a1a2e; --surface2: #141428; --border: #2a2a4a;
+    --accent: #6c63ff; --accent2: #ff6584; --text: #e8e8f0; --muted: #7070a0;
+    --green: #00e676; --red: #ff5252; --yellow: #ffd740;
+    --A: #c62828; --B: #1565c0; --C: #2e7d32; --D: #e65100;
+  }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; }
 
-  <!-- Socket.io desde el mismo CDN -->
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  /* ── Layout ── */
+  .layout { display: grid; grid-template-columns: 340px 1fr; grid-template-rows: auto 1fr; min-height: 100vh; }
+  header {
+    grid-column: 1 / -1; background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 14px 24px; display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 1.2rem; font-weight: 800; }
+  .header-meta { display: flex; gap: 12px; align-items: center; }
+  .badge { background: var(--surface2); border: 1px solid var(--border); border-radius: 99px; padding: 5px 12px; font-size: .8rem; }
+  .badge strong { color: var(--accent); }
 
-  <style>
-    /* ─── Reset & Tokens ────────────────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  /* ── Sidebar ── */
+  .sidebar { background: var(--surface2); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; }
+  .section { padding: 18px; border-bottom: 1px solid var(--border); }
+  .section-title { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 12px; }
 
-    :root {
-      --bg:          #070710;
-      --panel:       #0e0e1a;
-      --border:      #1e1e35;
-      --txt:         #e8e8f0;
-      --txt-dim:     #5a5a78;
-      --accent:      #7c5cfc;   /* violeta — autoridad del host */
-      --accent-glow: rgba(124, 92, 252, 0.25);
-      --green:       #c8f542;
-      --green-glow:  rgba(200, 245, 66, 0.15);
-      --gold:        #ffd700;
-      --silver:      #c0c0c0;
-      --bronze:      #cd7f32;
-      --danger:      #ff4d6d;
-      --radius:      14px;
-      --font:        'Segoe UI', system-ui, -apple-system, sans-serif;
-      --font-mono:   'Courier New', Courier, monospace;
-    }
+  /* ── Formulario pregunta ── */
+  label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 5px; margin-top: 12px; }
+  label:first-of-type { margin-top: 0; }
+  textarea, input[type="text"] {
+    width: 100%; padding: 10px 12px; background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 10px; color: var(--text); font-size: .9rem; outline: none; resize: vertical;
+    font-family: inherit; transition: border-color .2s;
+  }
+  textarea:focus, input[type="text"]:focus { border-color: var(--accent); }
+  .opciones-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+  .opcion-input { display: flex; flex-direction: column; gap: 4px; }
+  .opcion-label {
+    display: inline-block; font-size: .7rem; font-weight: 700; padding: 2px 8px;
+    border-radius: 4px; margin-bottom: 2px;
+  }
+  .lbl-A { background: var(--A); color: #fff; }
+  .lbl-B { background: var(--B); color: #fff; }
+  .lbl-C { background: var(--C); color: #fff; }
+  .lbl-D { background: var(--D); color: #fff; }
 
-    html { font-size: 16px; }
+  .correcta-select { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .correcta-btn {
+    padding: 6px 16px; border-radius: 8px; border: 2px solid var(--border);
+    background: transparent; color: var(--text); font-weight: 700; font-size: .9rem; cursor: pointer;
+    transition: all .15s;
+  }
+  .correcta-btn.selected-A { background: var(--A); border-color: var(--A); color: #fff; }
+  .correcta-btn.selected-B { background: var(--B); border-color: var(--B); color: #fff; }
+  .correcta-btn.selected-C { background: var(--C); border-color: var(--C); color: #fff; }
+  .correcta-btn.selected-D { background: var(--D); border-color: var(--D); color: #fff; }
 
-    body {
-      background: var(--bg);
-      color: var(--txt);
-      font-family: var(--font);
-      min-height: 100vh;
-      display: grid;
-      grid-template-columns: 320px 1fr;
-      grid-template-rows: auto 1fr;
-      gap: 0;
-    }
+  /* ── Botones ── */
+  .btn { padding: 10px 18px; border-radius: 10px; border: none; font-size: .9rem; font-weight: 700; cursor: pointer; transition: all .15s; }
+  .btn:active { transform: scale(.97); }
+  .btn-accent { background: var(--accent); color: #fff; }
+  .btn-green { background: var(--green); color: #000; }
+  .btn-red { background: var(--red); color: #fff; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--border); color: var(--text); }
+  .btn-outline:hover { border-color: var(--accent); }
+  .btn-sm { padding: 6px 12px; font-size: .8rem; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 
-    /* ─── Header ────────────────────────────────────────────────────────────── */
-    header {
-      grid-column: 1 / -1;
-      background: var(--panel);
-      border-bottom: 1px solid var(--border);
-      padding: 18px 32px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-    }
+  /* ── Lista de preguntas ── */
+  .pregunta-item {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; cursor: pointer;
+    transition: border-color .15s;
+  }
+  .pregunta-item:hover { border-color: var(--accent); }
+  .pregunta-item.activa { border-color: var(--green); }
+  .pregunta-num { font-size: .75rem; font-weight: 700; color: var(--muted); min-width: 24px; }
+  .pregunta-preview { font-size: .85rem; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pregunta-actions { display: flex; gap: 6px; }
 
-    .header-brand {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
+  /* ── Panel principal ── */
+  .main { padding: 24px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; }
 
-    .header-brand .eyebrow {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.2em;
-      color: var(--txt-dim);
-      font-weight: 600;
-    }
+  /* ── Estado del juego ── */
+  .estado-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 20px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .estado-info h2 { font-size: 1.2rem; font-weight: 700; }
+  .estado-info p { color: var(--muted); font-size: .9rem; margin-top: 4px; }
+  .fase-badge {
+    padding: 6px 16px; border-radius: 99px; font-size: .85rem; font-weight: 700;
+    background: var(--surface2); border: 1px solid var(--border);
+  }
+  .fase-badge.lobby { color: var(--muted); }
+  .fase-badge.boton { color: var(--yellow); border-color: var(--yellow); }
+  .fase-badge.respondiendo { color: var(--accent); border-color: var(--accent); }
+  .fase-badge.resultado { color: var(--green); border-color: var(--green); }
 
-    .header-brand h1 {
-      font-size: 22px;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      color: var(--txt);
-    }
+  .control-row { display: flex; gap: 10px; flex-wrap: wrap; }
 
-    .header-brand h1 span { color: var(--accent); }
+  /* ── Leaderboard ── */
+  .leaderboard-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+  .leaderboard-header { padding: 14px 20px; border-bottom: 1px solid var(--border); font-weight: 700; font-size: .95rem; }
+  .lb-row {
+    padding: 10px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border);
+    transition: background .2s;
+  }
+  .lb-row:last-child { border-bottom: none; }
+  .lb-pos { font-size: .8rem; color: var(--muted); font-weight: 700; width: 28px; }
+  .lb-pos.top { color: var(--yellow); font-size: 1rem; }
+  .lb-alias { flex: 1; font-weight: 600; font-size: .95rem; }
+  .lb-pts { font-weight: 800; font-size: 1rem; color: var(--accent); }
+  .lb-correctas { font-size: .75rem; color: var(--muted); }
+  .empty-state { padding: 30px; text-align: center; color: var(--muted); font-size: .9rem; }
 
-    .header-stats {
-      display: flex;
-      align-items: center;
-      gap: 24px;
-    }
+  /* ── Estado respuesta en vivo ── */
+  .live-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px 24px; }
+  .live-card h3 { font-size: .95rem; font-weight: 700; margin-bottom: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; font-size: .75rem; }
+  .respondiendo-now { font-size: 1.1rem; font-weight: 700; color: var(--accent); }
+  .cola-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .cola-item { background: var(--surface2); border-radius: 8px; padding: 6px 12px; font-size: .85rem; display: flex; gap: 8px; align-items: center; }
+  .cola-num { color: var(--muted); font-weight: 700; font-size: .75rem; }
 
-    .stat-chip {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-    }
-
-    .stat-chip .num {
-      font-size: 28px;
-      font-weight: 900;
-      line-height: 1;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .stat-chip .lbl {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--txt-dim);
-      font-weight: 600;
-    }
-
-    .stat-chip.ganadores .num { color: var(--green); }
-    .stat-chip.restantes .num { color: var(--accent); }
-
-    /* Badge de estado de la ronda */
-    #badge-ronda {
-      padding: 8px 18px;
-      border-radius: 50px;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      border: 2px solid transparent;
-      transition: all 0.3s ease;
-    }
-
-    #badge-ronda.esperando { background: rgba(90,90,120,0.2); border-color: var(--border); color: var(--txt-dim); }
-    #badge-ronda.activa    { background: rgba(200,245,66,0.1); border-color: var(--green); color: var(--green); animation: parpadear 1.5s ease infinite; }
-    #badge-ronda.terminada { background: rgba(255,77,109,0.1); border-color: var(--danger); color: var(--danger); }
-
-    @keyframes parpadear {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.6; }
-    }
-
-    /* ─── Panel lateral de controles ────────────────────────────────────────── */
-    #panel-controles {
-      background: var(--panel);
-      border-right: 1px solid var(--border);
-      padding: 28px 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-      overflow-y: auto;
-    }
-
-    .seccion-titulo {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.15em;
-      color: var(--txt-dim);
-      font-weight: 700;
-    }
-
-    /* ─── Botones del Host ───────────────────────────────────────────────────── */
-    .btn-host {
-      width: 100%;
-      padding: 18px 20px;
-      border: none;
-      border-radius: var(--radius);
-      font-size: 16px;
-      font-weight: 700;
-      font-family: var(--font);
-      cursor: pointer;
-      transition: transform 0.1s, opacity 0.2s, box-shadow 0.2s;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      text-align: left;
-    }
-
-    .btn-host:active:not(:disabled) { transform: scale(0.98); }
-    .btn-host:disabled { opacity: 0.35; cursor: not-allowed; }
-
-    .btn-host .btn-icono { font-size: 22px; flex-shrink: 0; }
-
-    .btn-host .btn-info { display: flex; flex-direction: column; gap: 2px; }
-    .btn-host .btn-label { font-size: 15px; }
-    .btn-host .btn-desc  { font-size: 11px; font-weight: 400; opacity: 0.65; }
-
-    #btn-iniciar {
-      background: var(--green);
-      color: #060610;
-      box-shadow: 0 4px 24px var(--green-glow);
-    }
-
-    #btn-iniciar:not(:disabled):hover {
-      box-shadow: 0 4px 40px rgba(200,245,66,0.4);
-    }
-
-    #btn-reiniciar {
-      background: transparent;
-      color: var(--txt-dim);
-      border: 2px solid var(--border);
-    }
-
-    #btn-reiniciar:not(:disabled):hover {
-      border-color: var(--danger);
-      color: var(--danger);
-    }
-
-    /* ─── Instrucciones en el panel ──────────────────────────────────────────── */
-    .instrucciones {
-      background: rgba(124,92,252,0.08);
-      border: 1px solid rgba(124,92,252,0.2);
-      border-radius: var(--radius);
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .instrucciones h3 {
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      color: var(--accent);
-    }
-
-    .instrucciones ol {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      counter-reset: paso;
-    }
-
-    .instrucciones li {
-      counter-increment: paso;
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      font-size: 13px;
-      color: var(--txt-dim);
-      line-height: 1.4;
-    }
-
-    .instrucciones li::before {
-      content: counter(paso);
-      background: rgba(124,92,252,0.3);
-      color: var(--accent);
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 10px;
-      font-weight: 700;
-      flex-shrink: 0;
-      margin-top: 1px;
-    }
-
-    /* ─── Área del Leaderboard ───────────────────────────────────────────────── */
-    #area-leaderboard {
-      padding: 28px 32px;
-      display: flex;
-      flex-direction: column;
-      gap: 24px;
-      overflow-y: auto;
-    }
-
-    .leaderboard-header {
-      display: flex;
-      align-items: baseline;
-      gap: 12px;
-    }
-
-    .leaderboard-header h2 {
-      font-size: 28px;
-      font-weight: 900;
-      letter-spacing: -0.04em;
-    }
-
-    .leaderboard-header .subtitulo {
-      font-size: 14px;
-      color: var(--txt-dim);
-    }
-
-    /* Grid de ganadores */
-    #lista-ganadores {
-      display: grid;
-      /* 2 columnas en pantallas grandes, 1 en chicas */
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 10px;
-    }
-
-    /* Slots vacíos (1-20 preasignados) */
-    .slot {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 14px 18px;
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      transition: all 0.3s ease;
-      min-height: 64px;
-    }
-
-    .slot.ocupado {
-      border-color: rgba(200,245,66,0.3);
-      background: rgba(200,245,66,0.04);
-      animation: entrar 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-    }
-
-    .slot.ocupado.top-3 {
-      border-color: rgba(255,215,0,0.4);
-      background: rgba(255,215,0,0.05);
-    }
-
-    @keyframes entrar {
-      from { opacity: 0; transform: scale(0.9) translateY(-8px); }
-      to   { opacity: 1; transform: scale(1) translateY(0); }
-    }
-
-    .slot-numero {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      font-weight: 800;
-      flex-shrink: 0;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .slot.vacio .slot-numero {
-      background: var(--border);
-      color: var(--txt-dim);
-      font-size: 13px;
-    }
-
-    .slot.ocupado .slot-numero {
-      background: rgba(200,245,66,0.15);
-      color: var(--green);
-    }
-
-    .slot.ocupado.top-3 .slot-numero {
-      background: rgba(255,215,0,0.15);
-      color: var(--gold);
-    }
-
-    .slot-alias {
-      font-size: 16px;
-      font-weight: 700;
-      color: var(--txt);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .slot.vacio .slot-alias {
-      color: var(--border);
-      font-size: 13px;
-      font-weight: 500;
-      font-family: var(--font-mono);
-    }
-
-    .slot-badge {
-      margin-left: auto;
-      font-size: 18px;
-      flex-shrink: 0;
-    }
-
-    /* ─── Estado vacío del leaderboard ──────────────────────────────────────── */
-    #estado-vacio {
-      grid-column: 1 / -1;
-      text-align: center;
-      padding: 60px 20px;
-      color: var(--txt-dim);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 12px;
-    }
-
-    #estado-vacio .icono { font-size: 48px; }
-    #estado-vacio p { font-size: 15px; max-width: 300px; line-height: 1.5; }
-
-    /* ─── Barra de progreso ──────────────────────────────────────────────────── */
-    .progreso-wrap {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .progreso-label {
-      display: flex;
-      justify-content: space-between;
-      font-size: 12px;
-      color: var(--txt-dim);
-      font-weight: 600;
-    }
-
-    .barra-fondo {
-      width: 100%;
-      height: 6px;
-      background: var(--border);
-      border-radius: 3px;
-      overflow: hidden;
-    }
-
-    #barra-progreso {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, var(--accent), var(--green));
-      border-radius: 3px;
-      transition: width 0.4s ease;
-    }
-
-    /* ─── Pantalla de victoria (cuando llega a 20) ───────────────────────────── */
-    #pantalla-victoria {
-      display: none;
-      grid-column: 1 / -1;
-      position: fixed;
-      inset: 0;
-      background: rgba(7,7,16,0.92);
-      backdrop-filter: blur(8px);
-      z-index: 50;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      gap: 24px;
-      animation: aparecer 0.5s ease;
-    }
-
-    #pantalla-victoria.visible { display: flex; }
-
-    .victoria-titulo {
-      font-size: clamp(36px, 6vw, 64px);
-      font-weight: 900;
-      letter-spacing: -0.05em;
-      text-align: center;
-      color: var(--green);
-      text-shadow: 0 0 60px rgba(200,245,66,0.4);
-    }
-
-    .victoria-subtitulo {
-      font-size: 18px;
-      color: var(--txt-dim);
-    }
-
-    #btn-cerrar-victoria {
-      padding: 14px 32px;
-      background: var(--accent);
-      color: white;
-      border: none;
-      border-radius: 50px;
-      font-size: 15px;
-      font-weight: 700;
-      font-family: var(--font);
-      cursor: pointer;
-      transition: transform 0.1s, opacity 0.2s;
-    }
-
-    #btn-cerrar-victoria:hover { opacity: 0.85; }
-
-    @keyframes aparecer {
-      from { opacity: 0; }
-      to   { opacity: 1; }
-    }
-  </style>
+  /* ── Notificaciones ── */
+  #notif {
+    position: fixed; bottom: 20px; right: 20px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 12px; padding: 12px 18px;
+    font-size: .9rem; max-width: 280px; z-index: 100; transform: translateY(120%);
+    transition: transform .3s ease; box-shadow: 0 4px 20px #0006;
+  }
+  #notif.show { transform: translateY(0); }
+  #notif.success { border-color: var(--green); }
+  #notif.error { border-color: var(--red); }
+</style>
 </head>
 <body>
 
-  <!-- ── Header ─────────────────────────────────────────────────────────────── -->
+<div class="layout">
   <header>
-    <div class="header-brand">
-      <span class="eyebrow">Panel de Control</span>
-      <h1>Juego en <span>Tiempo Real</span></h1>
-    </div>
-
-    <div class="header-stats">
-      <div class="stat-chip ganadores">
-        <span class="num" id="count-ganadores">0</span>
-        <span class="lbl">Ganadores</span>
-      </div>
-      <div class="stat-chip restantes">
-        <span class="num" id="count-restantes">20</span>
-        <span class="lbl">Cupos libres</span>
-      </div>
-      <div id="badge-ronda" class="esperando">● Esperando</div>
+    <h1>🎛️ Panel Host</h1>
+    <div class="header-meta">
+      <div class="badge">Jugadores: <strong id="total-jugadores">0</strong></div>
+      <div class="badge">Fase: <strong id="fase-header">lobby</strong></div>
+      <div class="badge">Pregunta: <strong id="idx-header">-</strong></div>
     </div>
   </header>
 
-  <!-- ── Panel de Controles ─────────────────────────────────────────────────── -->
-  <aside id="panel-controles">
-    <p class="seccion-titulo">Controles</p>
+  <!-- ── Sidebar: crear preguntas ── -->
+  <aside class="sidebar">
+    <div class="section">
+      <div class="section-title">✏️ Crear / Editar pregunta</div>
 
-    <button class="btn-host" id="btn-iniciar">
-      <span class="btn-icono">▶</span>
-      <span class="btn-info">
-        <span class="btn-label">Iniciar Ronda</span>
-        <span class="btn-desc">Activa los botones de todos los jugadores</span>
-      </span>
-    </button>
+      <label>Texto de la pregunta</label>
+      <textarea id="q-texto" rows="3" placeholder="¿Cuál es el símbolo del oro?"></textarea>
 
-    <button class="btn-host" id="btn-reiniciar">
-      <span class="btn-icono">↺</span>
-      <span class="btn-info">
-        <span class="btn-label">Reiniciar Todo</span>
-        <span class="btn-desc">Limpia la lista y vuelve al inicio</span>
-      </span>
-    </button>
-
-    <!-- Barra de progreso -->
-    <div class="progreso-wrap">
-      <div class="progreso-label">
-        <span>Progreso</span>
-        <span><span id="prog-num">0</span> / 20</span>
+      <label>Opciones de respuesta</label>
+      <div class="opciones-grid">
+        <div class="opcion-input">
+          <span class="opcion-label lbl-A">A</span>
+          <input type="text" id="q-A" placeholder="Opción A">
+        </div>
+        <div class="opcion-input">
+          <span class="opcion-label lbl-B">B</span>
+          <input type="text" id="q-B" placeholder="Opción B">
+        </div>
+        <div class="opcion-input">
+          <span class="opcion-label lbl-C">C</span>
+          <input type="text" id="q-C" placeholder="Opción C">
+        </div>
+        <div class="opcion-input">
+          <span class="opcion-label lbl-D">D</span>
+          <input type="text" id="q-D" placeholder="Opción D">
+        </div>
       </div>
-      <div class="barra-fondo">
-        <div id="barra-progreso"></div>
+
+      <label>Respuesta correcta</label>
+      <div class="correcta-select" id="correcta-select">
+        <button class="correcta-btn" data-letra="A">A</button>
+        <button class="correcta-btn" data-letra="B">B</button>
+        <button class="correcta-btn" data-letra="C">C</button>
+        <button class="correcta-btn" data-letra="D">D</button>
+      </div>
+
+      <input type="hidden" id="q-correcta" value="">
+      <input type="hidden" id="q-edit-index" value="-1">
+
+      <div class="btn-row">
+        <button class="btn btn-accent" id="btn-guardar" style="flex:1">💾 Guardar pregunta</button>
+        <button class="btn btn-outline btn-sm" id="btn-nueva">+ Nueva</button>
       </div>
     </div>
 
-    <div class="instrucciones">
-      <h3>Flujo sugerido</h3>
-      <ol>
-        <li>Muestra el código QR en pantalla para que los asistentes escaneen.</li>
-        <li>Espera a que los jugadores ingresen su alias.</li>
-        <li>Da la señal verbal y presiona <strong>Iniciar Ronda</strong>.</li>
-        <li>Espera a que se llenen los 20 cupos.</li>
-        <li>Anuncia a los ganadores y presiona <strong>Reiniciar</strong> para la próxima ronda.</li>
-      </ol>
+    <div class="section" style="flex:1">
+      <div class="section-title">📋 Banco de preguntas</div>
+      <div id="lista-preguntas">
+        <div class="empty-state">No hay preguntas todavía.<br>Creá una arriba 👆</div>
+      </div>
     </div>
   </aside>
 
-  <!-- ── Área del Leaderboard ───────────────────────────────────────────────── -->
-  <main id="area-leaderboard">
-    <div class="leaderboard-header">
-      <h2>Leaderboard</h2>
-      <span class="subtitulo">Primeros 20 en presionar</span>
+  <!-- ── Main: controles y leaderboard ── -->
+  <main class="main">
+
+    <!-- Estado actual -->
+    <div class="estado-card">
+      <div class="estado-info">
+        <h2 id="estado-titulo">Esperando...</h2>
+        <p id="estado-desc">Cargá una pregunta y apretá "Abrir botón"</p>
+      </div>
+      <span class="fase-badge lobby" id="fase-badge">lobby</span>
     </div>
 
-    <div id="lista-ganadores">
-      <!-- Los slots se generan por JS -->
+    <!-- Controles -->
+    <div class="control-row">
+      <button class="btn btn-green" id="btn-abrir-boton" disabled>▶ Abrir botón para esta pregunta</button>
+      <button class="btn btn-accent" id="btn-siguiente" disabled>Siguiente pregunta ▶</button>
+      <button class="btn btn-red btn-outline" id="btn-reiniciar">↺ Reiniciar todo</button>
     </div>
+
+    <!-- Live: quién está respondiendo -->
+    <div class="live-card" id="live-card">
+      <h3>Respondiendo ahora</h3>
+      <p class="respondiendo-now" id="respondiendo-now">Nadie todavía</p>
+      <div class="cola-list" id="cola-list"></div>
+    </div>
+
+    <!-- Leaderboard -->
+    <div class="leaderboard-card">
+      <div class="leaderboard-header">🏆 Tabla de puntajes</div>
+      <div id="leaderboard-body">
+        <div class="empty-state">Los puntajes aparecerán cuando empiecen las respuestas</div>
+      </div>
+    </div>
+
   </main>
+</div>
 
-  <!-- ── Overlay de Victoria ────────────────────────────────────────────────── -->
-  <div id="pantalla-victoria">
-    <div class="victoria-titulo">🏁 ¡Ronda Completa!</div>
-    <div class="victoria-subtitulo">Los 20 ganadores han sido registrados.</div>
-    <button id="btn-cerrar-victoria">Ver resultados finales</button>
-  </div>
+<!-- Notificación -->
+<div id="notif"></div>
 
-  <script>
-    // ─── Conexión Socket.io ──────────────────────────────────────────────────
-    const socket = io();
+<script>
+const socket = io();
 
-    // ─── Elementos DOM ───────────────────────────────────────────────────────
-    const btnIniciar        = document.getElementById("btn-iniciar");
-    const btnReiniciar      = document.getElementById("btn-reiniciar");
-    const listaGanadores    = document.getElementById("lista-ganadores");
-    const countGanadores    = document.getElementById("count-ganadores");
-    const countRestantes    = document.getElementById("count-restantes");
-    const badgeRonda        = document.getElementById("badge-ronda");
-    const barraProgreso     = document.getElementById("barra-progreso");
-    const progNum           = document.getElementById("prog-num");
-    const pantallaVictoria  = document.getElementById("pantalla-victoria");
-    const btnCerrarVictoria = document.getElementById("btn-cerrar-victoria");
+// ── Estado local ──
+let preguntas = [];          // lista completa
+let preguntaActivaId = null; // id de la pregunta en juego
+let preguntaActivaIndex = 0;
+let correctaSeleccionada = "";
+let editIndex = -1;
+let fase = "lobby";
+let totalJugadores = 0;
 
-    // ─── Estado local del host ───────────────────────────────────────────────
-    const MAX = 20;
-    let ganadoresActuales = [];
+// ── Notificaciones ──
+let notifTimeout;
+function notif(msg, tipo = "success") {
+  const el = document.getElementById('notif');
+  el.textContent = msg;
+  el.className = `show ${tipo}`;
+  clearTimeout(notifTimeout);
+  notifTimeout = setTimeout(() => el.className = '', 3000);
+}
 
-    // ─── Inicializar grid vacío de slots ─────────────────────────────────────
-    function construirSlots() {
-      listaGanadores.innerHTML = "";
-      for (let i = 1; i <= MAX; i++) {
-        const div = document.createElement("div");
-        div.className = "slot vacio";
-        div.id = `slot-${i}`;
-        div.innerHTML = `
-          <div class="slot-numero">${i}</div>
-          <div class="slot-alias">— vacío —</div>
-        `;
-        listaGanadores.appendChild(div);
+// ── Correcta select ──
+document.querySelectorAll('.correcta-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.correcta-btn').forEach(b => b.className = 'correcta-btn');
+    const letra = btn.dataset.letra;
+    btn.className = `correcta-btn selected-${letra}`;
+    correctaSeleccionada = letra;
+    document.getElementById('q-correcta').value = letra;
+  });
+});
+
+// ── Guardar pregunta ──
+document.getElementById('btn-guardar').addEventListener('click', () => {
+  const texto = document.getElementById('q-texto').value.trim();
+  const A = document.getElementById('q-A').value.trim();
+  const B = document.getElementById('q-B').value.trim();
+  const C = document.getElementById('q-C').value.trim();
+  const D = document.getElementById('q-D').value.trim();
+  const correcta = correctaSeleccionada;
+
+  if (!texto || !A || !B || !C || !D || !correcta) {
+    notif('Completá todos los campos y elegí la correcta', 'error');
+    return;
+  }
+
+  const idx = editIndex >= 0 ? editIndex : undefined;
+  socket.emit('host_cargar_pregunta', {
+    texto, opciones: [
+      { letra: 'A', texto: A },
+      { letra: 'B', texto: B },
+      { letra: 'C', texto: C },
+      { letra: 'D', texto: D },
+    ],
+    correcta,
+    index: idx,
+  });
+});
+
+// ── Nueva pregunta (limpiar form) ──
+document.getElementById('btn-nueva').addEventListener('click', limpiarForm);
+
+function limpiarForm() {
+  document.getElementById('q-texto').value = '';
+  ['A','B','C','D'].forEach(l => document.getElementById(`q-${l}`).value = '');
+  document.querySelectorAll('.correcta-btn').forEach(b => b.className = 'correcta-btn');
+  correctaSeleccionada = '';
+  editIndex = -1;
+  document.getElementById('q-edit-index').value = '-1';
+}
+
+// ── Pregunta guardada ──
+socket.on('pregunta_guardada', ({ total }) => {
+  notif(`✓ Pregunta guardada (total: ${total})`);
+  limpiarForm();
+  socket.emit('host_pedir_preguntas');
+});
+
+// ── Lista de preguntas actualizada ──
+socket.on('lista_preguntas', ({ preguntas: ps, preguntaIndex }) => {
+  preguntas = ps;
+  preguntaActivaIndex = preguntaIndex;
+  renderListaPreguntas();
+  // Habilitar botón si hay preguntas
+  document.getElementById('btn-abrir-boton').disabled = ps.length === 0 || fase !== 'lobby';
+});
+
+socket.on('preguntas_actualizadas', ({ preguntas: ps }) => {
+  preguntas = ps;
+  renderListaPreguntas();
+});
+
+function renderListaPreguntas() {
+  const container = document.getElementById('lista-preguntas');
+  if (preguntas.length === 0) {
+    container.innerHTML = '<div class="empty-state">No hay preguntas todavía.<br>Creá una arriba 👆</div>';
+    return;
+  }
+  container.innerHTML = '';
+  preguntas.forEach((p, i) => {
+    const div = document.createElement('div');
+    div.className = 'pregunta-item' + (i === preguntaActivaIndex ? ' activa' : '');
+    div.innerHTML = `
+      <span class="pregunta-num">${i + 1}</span>
+      <span class="pregunta-preview" title="${p.texto}">${p.texto}</span>
+      <div class="pregunta-actions">
+        <button class="btn btn-outline btn-sm" data-action="usar" data-index="${i}" data-id="${p.id}">Usar</button>
+        <button class="btn btn-outline btn-sm" data-action="editar" data-index="${i}">✏</button>
+        <button class="btn btn-red btn-sm" data-action="eliminar" data-index="${i}">🗑</button>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+
+  container.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const action = btn.dataset.action;
+      const idx = parseInt(btn.dataset.index);
+      if (action === 'eliminar') {
+        socket.emit('host_eliminar_pregunta', { index: idx });
+      } else if (action === 'editar') {
+        cargarEnForm(preguntas[idx], idx);
+      } else if (action === 'usar') {
+        preguntaActivaId = parseInt(btn.dataset.id);
+        preguntaActivaIndex = idx;
+        document.querySelectorAll('.pregunta-item').forEach((el, i) => {
+          el.classList.toggle('activa', i === idx);
+        });
+        notif(`Pregunta ${idx+1} seleccionada`);
+        document.getElementById('btn-abrir-boton').disabled = fase !== 'lobby';
       }
-    }
-
-    construirSlots(); // Construir al cargar
-
-    // ─── Actualizar el slot de una posición con el alias del ganador ─────────
-    function rellenarSlot(posicion, alias) {
-      const slot = document.getElementById(`slot-${posicion}`);
-      if (!slot) return;
-
-      slot.className = `slot ocupado${posicion <= 3 ? " top-3" : ""}`;
-
-      const medalla = posicion === 1 ? "🥇" : posicion === 2 ? "🥈" : posicion === 3 ? "🥉" : "✅";
-
-      slot.innerHTML = `
-        <div class="slot-numero">${posicion}</div>
-        <div class="slot-alias">${alias}</div>
-        <div class="slot-badge">${medalla}</div>
-      `;
-    }
-
-    // ─── Actualizar estadísticas y barra de progreso ─────────────────────────
-    function actualizarStats(total) {
-      countGanadores.textContent = total;
-      countRestantes.textContent = MAX - total;
-      barraProgreso.style.width = `${(total / MAX) * 100}%`;
-      progNum.textContent = total;
-    }
-
-    // ─── Actualizar badge de estado de la ronda ──────────────────────────────
-    function actualizarBadge(estado) {
-      badgeRonda.className = estado;
-      const textos = {
-        esperando: "● Esperando",
-        activa:    "● Ronda Activa",
-        terminada: "● Terminada",
-      };
-      badgeRonda.textContent = textos[estado] || estado;
-    }
-
-    // ─── Sincronización inicial ───────────────────────────────────────────────
-    socket.on("estado_actual", ({ ronda, ganadores }) => {
-      ganadoresActuales = ganadores || [];
-      construirSlots();
-      ganadoresActuales.forEach(({ posicion, alias }) => rellenarSlot(posicion, alias));
-      actualizarStats(ganadoresActuales.length);
-      actualizarBadge(ronda);
-
-      // Ajustar estado de botones según la ronda
-      if (ronda === "activa") {
-        btnIniciar.disabled = true;
-      }
     });
+  });
+}
 
-    // ─── Eventos de los botones del Host ─────────────────────────────────────
+function cargarEnForm(p, idx) {
+  document.getElementById('q-texto').value = p.texto;
+  p.opciones.forEach(op => {
+    document.getElementById(`q-${op.letra}`).value = op.texto;
+  });
+  document.querySelectorAll('.correcta-btn').forEach(b => {
+    b.className = 'correcta-btn' + (b.dataset.letra === p.correcta ? ` selected-${p.correcta}` : '');
+  });
+  correctaSeleccionada = p.correcta;
+  editIndex = idx;
+}
 
-    btnIniciar.addEventListener("click", () => {
-      if (!confirm("¿Iniciar la ronda ahora? Se resetearán los ganadores anteriores.")) return;
-      socket.emit("iniciar_ronda");
-    });
+// ── Abrir botón ──
+document.getElementById('btn-abrir-boton').addEventListener('click', () => {
+  if (preguntas.length === 0) { notif('Primero cargá una pregunta', 'error'); return; }
+  socket.emit('host_iniciar_boton', { preguntaId: preguntaActivaId || undefined });
+});
 
-    btnReiniciar.addEventListener("click", () => {
-      if (!confirm("¿Reiniciar todo? Esto borrará la lista de ganadores.")) return;
-      socket.emit("reiniciar_todo");
-    });
+// ── Siguiente pregunta ──
+document.getElementById('btn-siguiente').addEventListener('click', () => {
+  socket.emit('host_siguiente_pregunta');
+});
 
-    btnCerrarVictoria.addEventListener("click", () => {
-      pantallaVictoria.classList.remove("visible");
-    });
+// ── Reiniciar ──
+document.getElementById('btn-reiniciar').addEventListener('click', () => {
+  if (confirm('¿Reiniciar todo? Se borrarán puntajes.')) {
+    socket.emit('host_reiniciar');
+  }
+});
 
-    // ─── Respuesta del Servidor: Ronda iniciada ───────────────────────────────
-    socket.on("ronda_iniciada", () => {
-      ganadoresActuales = [];
-      construirSlots();
-      actualizarStats(0);
-      actualizarBadge("activa");
-      pantallaVictoria.classList.remove("visible");
+// ── Eventos del juego ──
+socket.on('estado_actual', ({ fase: f, puntajes, preguntaIndex }) => {
+  setFase(f);
+  if (puntajes) renderLeaderboard(puntajes);
+  socket.emit('host_pedir_preguntas');
+});
 
-      // Durante la ronda activa, deshabilitar "Iniciar" para no spamear
-      btnIniciar.disabled = true;
-    });
+socket.on('jugador_unido', ({ alias, total }) => {
+  totalJugadores = total;
+  document.getElementById('total-jugadores').textContent = total;
+  notif(`${alias} se unió (${total} jugadores)`);
+});
 
-    // ─── Respuesta del Servidor: Nuevo ganador registrado ────────────────────
-    socket.on("actualizar_ganadores", ({ ganadores, total }) => {
-      ganadoresActuales = ganadores;
+socket.on('fase_boton', ({ pregunta }) => {
+  setFase('boton');
+  document.getElementById('estado-titulo').textContent = `Pregunta activa`;
+  document.getElementById('estado-desc').textContent = pregunta.texto;
+  document.getElementById('btn-abrir-boton').disabled = true;
+  document.getElementById('btn-siguiente').disabled = false;
+});
 
-      // Rellenar solo el último slot añadido (eficiencia: no re-renderizar todo)
-      const ultimo = ganadores[ganadores.length - 1];
-      if (ultimo) rellenarSlot(ultimo.posicion, ultimo.alias);
+socket.on('turno_respondiendo', ({ alias }) => {
+  document.getElementById('respondiendo-now').textContent = alias;
+});
 
-      actualizarStats(total);
-    });
+socket.on('mostrar_resultado', ({ correcto, alias, puntosGanados, puntajes, motivo }) => {
+  setFase('resultado');
+  if (correcto) {
+    document.getElementById('estado-titulo').textContent = `✅ ${alias} respondió correctamente`;
+    document.getElementById('estado-desc').textContent = `+${puntosGanados} puntos`;
+  } else {
+    document.getElementById('estado-titulo').textContent = 'Sin respuesta correcta';
+    document.getElementById('estado-desc').textContent = 'Nadie de la cola respondió bien';
+  }
+  if (puntajes) renderLeaderboard(puntajes);
+  document.getElementById('respondiendo-now').textContent = '—';
+  document.getElementById('cola-list').innerHTML = '';
+});
 
-    // ─── Respuesta del Servidor: Ronda terminada (20 ganadores) ──────────────
-    socket.on("ronda_terminada", ({ ganadores }) => {
-      ganadoresActuales = ganadores;
-      actualizarBadge("terminada");
-      btnIniciar.disabled = false;
+socket.on('respuesta_incorrecta', ({ alias }) => {
+  notif(`✗ ${alias} respondió mal`, 'error');
+});
 
-      // Mostrar overlay de victoria brevemente
-      pantallaVictoria.classList.add("visible");
-    });
+socket.on('actualizar_cupos', ({ total, max }) => {
+  document.getElementById('estado-desc').textContent = `${total}/${max} cupos tomados`;
+});
 
-    // ─── Respuesta del Servidor: Juego reiniciado ─────────────────────────────
-    socket.on("juego_reiniciado", () => {
-      ganadoresActuales = [];
-      construirSlots();
-      actualizarStats(0);
-      actualizarBadge("esperando");
-      pantallaVictoria.classList.remove("visible");
-      btnIniciar.disabled = false;
-    });
-  </script>
+socket.on('volver_lobby', ({ puntajes, preguntaIndex }) => {
+  setFase('lobby');
+  preguntaActivaIndex = preguntaIndex;
+  if (puntajes) renderLeaderboard(puntajes);
+  document.getElementById('respondiendo-now').textContent = 'Nadie todavía';
+  document.getElementById('cola-list').innerHTML = '';
+  document.getElementById('estado-titulo').textContent = 'Esperando...';
+  document.getElementById('estado-desc').textContent = 'Seleccioná una pregunta y abrí el botón';
+  socket.emit('host_pedir_preguntas');
+});
+
+socket.on('juego_reiniciado', () => {
+  setFase('lobby');
+  renderLeaderboard([]);
+  document.getElementById('respondiendo-now').textContent = 'Nadie todavía';
+  document.getElementById('cola-list').innerHTML = '';
+  document.getElementById('estado-titulo').textContent = 'Juego reiniciado';
+  document.getElementById('estado-desc').textContent = 'Listo para empezar';
+  socket.emit('host_pedir_preguntas');
+});
+
+socket.on('error_host', ({ msg }) => notif(msg, 'error'));
+
+function setFase(f) {
+  fase = f;
+  const badge = document.getElementById('fase-badge');
+  badge.textContent = f;
+  badge.className = `fase-badge ${f}`;
+  document.getElementById('fase-header').textContent = f;
+  document.getElementById('btn-abrir-boton').disabled = f !== 'lobby' || preguntas.length === 0;
+  document.getElementById('btn-siguiente').disabled = f === 'lobby';
+}
+
+function renderLeaderboard(puntajes) {
+  const body = document.getElementById('leaderboard-body');
+  if (!puntajes || puntajes.length === 0) {
+    body.innerHTML = '<div class="empty-state">Los puntajes aparecerán cuando empiecen las respuestas</div>';
+    return;
+  }
+  const medallas = ['🥇','🥈','🥉'];
+  body.innerHTML = puntajes.map((p, i) => `
+    <div class="lb-row">
+      <span class="lb-pos ${i < 3 ? 'top' : ''}">${medallas[i] || (i+1)}</span>
+      <span class="lb-alias">${p.alias}</span>
+      <span class="lb-correctas">✓ ${p.respuestasCorrectas}</span>
+      <span class="lb-pts">${p.puntos} pts</span>
+    </div>
+  `).join('');
+}
+
+// Pedir preguntas al conectar
+socket.on('connect', () => socket.emit('host_pedir_preguntas'));
+</script>
 </body>
 </html>

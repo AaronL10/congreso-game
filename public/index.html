@@ -1,650 +1,392 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <!-- Viewport crítico para móvil: evitar zoom automático -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#0d0d0d" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <title>¡Juega Ahora!</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Congreso — Jugador</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  <!-- Socket.io desde CDN — única dependencia externa -->
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  :root {
+    --bg: #0f0f1a;
+    --surface: #1a1a2e;
+    --border: #2a2a4a;
+    --accent: #6c63ff;
+    --accent2: #ff6584;
+    --text: #e8e8f0;
+    --muted: #7070a0;
+    --green: #00e676;
+    --red: #ff5252;
+    --A: #e53935; --B: #1e88e5; --C: #43a047; --D: #fb8c00;
+  }
 
-  <style>
-    /* ─── Reset & Base ─────────────────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; overflow-x: hidden; }
 
-    :root {
-      --bg:         #0d0d0d;
-      --surface:    #1a1a1a;
-      --border:     #2a2a2a;
-      --txt:        #f0f0f0;
-      --txt-dim:    #888;
-      --accent:     #c8f542;   /* verde-lima eléctrico — el pulso del juego */
-      --accent-dim: #7aad1a;
-      --danger:     #ff4d4d;
-      --wait:       #3a3a3a;
-      --wait-txt:   #666;
-      --gold:       #ffd700;
-      --radius:     16px;
-      --font:       'Segoe UI', system-ui, -apple-system, sans-serif;
-    }
+  /* ── Pantallas ── */
+  .screen { display: none; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; text-align: center; }
+  .screen.active { display: flex; }
 
-    html, body {
-      height: 100%;
-      background: var(--bg);
-      color: var(--txt);
-      font-family: var(--font);
-      -webkit-tap-highlight-color: transparent; /* evitar flash azul al tocar en iOS */
-      overscroll-behavior: none;
-    }
+  /* ── Login ── */
+  #screen-login h1 { font-size: 2rem; font-weight: 800; letter-spacing: -1px; margin-bottom: 6px; }
+  #screen-login p { color: var(--muted); margin-bottom: 32px; }
+  .input-group { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 12px; }
+  input[type="text"] {
+    width: 100%; padding: 16px 20px; background: var(--surface); border: 2px solid var(--border);
+    border-radius: 14px; color: var(--text); font-size: 1.1rem; outline: none; transition: border-color .2s;
+  }
+  input[type="text"]:focus { border-color: var(--accent); }
+  .btn-primary {
+    padding: 16px 32px; background: var(--accent); color: #fff; border: none; border-radius: 14px;
+    font-size: 1.1rem; font-weight: 700; cursor: pointer; transition: transform .1s, opacity .2s; width: 100%;
+  }
+  .btn-primary:active { transform: scale(.97); }
+  .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
 
-    body {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100dvh; /* dvh: unidad moderna que excluye barras del navegador */
-      padding: 24px 20px;
-      gap: 0;
-    }
+  /* ── Espera ── */
+  #screen-espera h2 { font-size: 1.5rem; font-weight: 700; margin-bottom: 10px; }
+  .avatar { width: 80px; height: 80px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: 800; margin-bottom: 20px; }
+  .pulse { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.06);opacity:.8} }
 
-    /* ─── Pantalla de Login ─────────────────────────────────────────────────── */
-    #pantalla-login {
-      width: 100%;
-      max-width: 380px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 20px;
-      animation: aparecer 0.4s ease;
-    }
+  /* ── Botón grande ── */
+  #screen-boton { gap: 20px; }
+  .pregunta-texto {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+    padding: 20px 24px; max-width: 440px; font-size: 1.15rem; font-weight: 600; line-height: 1.5;
+    margin-bottom: 10px;
+  }
+  #btn-presionar {
+    width: 200px; height: 200px; border-radius: 50%; border: 6px solid var(--accent);
+    background: radial-gradient(circle at 40% 35%, #8a80ff, var(--accent));
+    color: #fff; font-size: 1.3rem; font-weight: 800; cursor: pointer;
+    box-shadow: 0 0 40px #6c63ff55, 0 8px 30px #0008;
+    transition: transform .12s, box-shadow .12s;
+    display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.3;
+  }
+  #btn-presionar:active { transform: scale(.93); box-shadow: 0 0 20px #6c63ff33; }
+  #btn-presionar:disabled { background: #2a2a4a; border-color: #2a2a4a; box-shadow: none; cursor: not-allowed; }
+  #btn-presionar .sub { font-size: .75rem; font-weight: 400; opacity: .75; margin-top: 4px; }
 
-    .logo-marca {
-      font-size: 13px;
-      letter-spacing: 0.25em;
-      text-transform: uppercase;
-      color: var(--txt-dim);
-      font-weight: 500;
-    }
+  .cupos-bar { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: .9rem; }
+  .cupos-count { font-weight: 700; color: var(--text); font-size: 1.1rem; }
 
-    .titulo-bienvenida {
-      font-size: clamp(28px, 8vw, 40px);
-      font-weight: 800;
-      text-align: center;
-      line-height: 1.1;
-      letter-spacing: -0.03em;
-    }
+  /* ── Responder ── */
+  #screen-responder { gap: 16px; padding: 20px; }
+  .pregunta-box {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+    padding: 20px 24px; width: 100%; max-width: 480px; font-size: 1.1rem; font-weight: 600; line-height: 1.5;
+  }
+  .timer-bar { width: 100%; max-width: 480px; height: 8px; background: var(--border); border-radius: 99px; overflow: hidden; }
+  .timer-fill { height: 100%; background: var(--accent); border-radius: 99px; transition: width .1s linear, background .3s; }
+  .opciones { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; max-width: 480px; }
+  .opcion {
+    padding: 20px 16px; border-radius: 16px; border: none; color: #fff; font-size: 1rem; font-weight: 700;
+    cursor: pointer; display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+    transition: transform .1s, filter .15s; min-height: 80px;
+  }
+  .opcion:active { transform: scale(.96); }
+  .opcion:disabled { filter: brightness(.5); cursor: not-allowed; }
+  .opcion .letra { font-size: .75rem; opacity: .75; font-weight: 600; }
+  .opcion[data-letra="A"] { background: var(--A); }
+  .opcion[data-letra="B"] { background: var(--B); }
+  .opcion[data-letra="C"] { background: var(--C); }
+  .opcion[data-letra="D"] { background: var(--D); }
 
-    .titulo-bienvenida span {
-      color: var(--accent);
-    }
+  /* ── Esperar turno ── */
+  #screen-cola { gap: 16px; }
+  #screen-cola h2 { font-size: 1.4rem; font-weight: 700; }
+  .posicion-badge {
+    width: 100px; height: 100px; border-radius: 50%; border: 4px solid var(--accent);
+    display: flex; align-items: center; justify-content: center; flex-direction: column;
+    font-size: 2.2rem; font-weight: 800; color: var(--accent);
+  }
+  .posicion-badge span { font-size: .7rem; font-weight: 600; color: var(--muted); }
 
-    .subtitulo {
-      font-size: 15px;
-      color: var(--txt-dim);
-      text-align: center;
-      line-height: 1.5;
-    }
+  /* ── Resultado respuesta ── */
+  #screen-resultado-resp { gap: 16px; }
+  .resultado-icon { font-size: 5rem; }
+  .resultado-puntos { font-size: 2.5rem; font-weight: 800; color: var(--green); }
+  .resultado-label { color: var(--muted); font-size: 1rem; }
 
-    .form-group {
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .form-group label {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--txt-dim);
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-    }
-
-    input[type="text"] {
-      width: 100%;
-      padding: 18px 20px;
-      background: var(--surface);
-      border: 2px solid var(--border);
-      border-radius: var(--radius);
-      color: var(--txt);
-      font-size: 20px;
-      font-family: var(--font);
-      font-weight: 600;
-      text-align: center;
-      outline: none;
-      transition: border-color 0.2s;
-      -webkit-appearance: none;
-    }
-
-    input[type="text"]::placeholder { color: var(--wait-txt); font-weight: 400; }
-    input[type="text"]:focus { border-color: var(--accent); }
-
-    /* ─── Botones ───────────────────────────────────────────────────────────── */
-    .btn {
-      width: 100%;
-      padding: 20px;
-      border: none;
-      border-radius: var(--radius);
-      font-size: 18px;
-      font-weight: 700;
-      font-family: var(--font);
-      cursor: pointer;
-      transition: transform 0.1s, opacity 0.2s;
-      letter-spacing: 0.02em;
-      -webkit-appearance: none;
-    }
-
-    .btn:active:not(:disabled) { transform: scale(0.97); }
-    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-    .btn-primary {
-      background: var(--accent);
-      color: #0d0d0d;
-    }
-
-    /* ─── Pantalla de Juego ─────────────────────────────────────────────────── */
-    #pantalla-juego {
-      width: 100%;
-      max-width: 380px;
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      gap: 28px;
-      animation: aparecer 0.4s ease;
-    }
-
-    .jugador-info {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 50px;
-      padding: 10px 20px;
-    }
-
-    .jugador-avatar {
-      width: 32px;
-      height: 32px;
-      background: var(--accent);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      font-weight: 800;
-      color: #0d0d0d;
-      flex-shrink: 0;
-    }
-
-    .jugador-nombre {
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--txt);
-    }
-
-    /* ─── Estado visual ─────────────────────────────────────────────────────── */
-    .estado-badge {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 14px 24px;
-      border-radius: 50px;
-      font-size: 14px;
-      font-weight: 600;
-      text-align: center;
-      transition: all 0.3s ease;
-    }
-
-    .estado-badge.esperando {
-      background: rgba(58, 58, 58, 0.5);
-      border: 1px solid var(--border);
-      color: var(--txt-dim);
-    }
-
-    .estado-badge.activo {
-      background: rgba(200, 245, 66, 0.15);
-      border: 1px solid var(--accent);
-      color: var(--accent);
-    }
-
-    .estado-badge.enviado {
-      background: rgba(200, 245, 66, 0.08);
-      border: 1px solid var(--accent-dim);
-      color: var(--accent-dim);
-    }
-
-    .pulso {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
-    .pulso.gris { background: var(--wait-txt); }
-
-    .pulso.verde {
-      background: var(--accent);
-      animation: pulsar 1s infinite;
-    }
-
-    /* ─── Botón GIGANTE de juego ────────────────────────────────────────────── */
-    #btn-juego {
-      width: 100%;
-      min-height: 200px;
-      border-radius: 24px;
-      font-size: clamp(22px, 7vw, 30px);
-      font-weight: 900;
-      letter-spacing: -0.02em;
-      border: none;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      position: relative;
-      overflow: hidden;
-      -webkit-appearance: none;
-      touch-action: manipulation; /* reduce latencia de 300ms en móviles */
-    }
-
-    #btn-juego:not(:disabled):active {
-      transform: scale(0.96);
-    }
-
-    #btn-juego.estado-espera {
-      background: var(--wait);
-      color: var(--wait-txt);
-      cursor: not-allowed;
-      box-shadow: none;
-    }
-
-    #btn-juego.estado-listo {
-      background: var(--accent);
-      color: #0d0d0d;
-      box-shadow: 0 0 60px rgba(200, 245, 66, 0.35),
-                  0 0 120px rgba(200, 245, 66, 0.15);
-      animation: latir 0.6s ease infinite alternate;
-      cursor: pointer;
-    }
-
-    #btn-juego.estado-enviado {
-      background: var(--surface);
-      color: var(--txt-dim);
-      border: 2px solid var(--border);
-      cursor: not-allowed;
-    }
-
-    .btn-icono { font-size: clamp(40px, 12vw, 60px); line-height: 1; }
-    .btn-subtexto { font-size: 13px; font-weight: 500; opacity: 0.7; margin-top: 4px; }
-
-    /* ─── Resultado del ganador ─────────────────────────────────────────────── */
-    #resultado {
-      display: none;
-      width: 100%;
-      padding: 24px;
-      border-radius: var(--radius);
-      text-align: center;
-      animation: aparecer 0.5s ease;
-    }
-
-    #resultado.ganador {
-      background: rgba(200, 245, 66, 0.1);
-      border: 2px solid var(--accent);
-    }
-
-    #resultado.perdedor {
-      background: var(--surface);
-      border: 1px solid var(--border);
-    }
-
-    .resultado-posicion {
-      font-size: clamp(60px, 20vw, 80px);
-      font-weight: 900;
-      line-height: 1;
-      color: var(--accent);
-    }
-
-    .resultado-etiqueta {
-      font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: 0.15em;
-      color: var(--txt-dim);
-      margin-top: 4px;
-    }
-
-    .resultado-mensaje {
-      font-size: 16px;
-      font-weight: 600;
-      margin-top: 12px;
-      color: var(--txt);
-      line-height: 1.4;
-    }
-
-    /* ─── Animaciones ───────────────────────────────────────────────────────── */
-    @keyframes aparecer {
-      from { opacity: 0; transform: translateY(12px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes pulsar {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%       { opacity: 0.6; transform: scale(0.85); }
-    }
-
-    @keyframes latir {
-      from { box-shadow: 0 0 40px rgba(200, 245, 66, 0.3), 0 0 80px rgba(200, 245, 66, 0.1); }
-      to   { box-shadow: 0 0 80px rgba(200, 245, 66, 0.5), 0 0 160px rgba(200, 245, 66, 0.2); }
-    }
-
-    /* ─── Error / notificación ──────────────────────────────────────────────── */
-    #notificacion {
-      position: fixed;
-      bottom: 24px;
-      left: 50%;
-      transform: translateX(-50%) translateY(100px);
-      background: var(--surface);
-      border: 1px solid var(--border);
-      color: var(--txt);
-      padding: 12px 24px;
-      border-radius: 50px;
-      font-size: 14px;
-      font-weight: 500;
-      transition: transform 0.3s ease;
-      white-space: nowrap;
-      z-index: 100;
-    }
-
-    #notificacion.visible { transform: translateX(-50%) translateY(0); }
-
-    /* ─── Indicador de conexión ─────────────────────────────────────────────── */
-    #dot-conexion {
-      position: fixed;
-      top: 16px;
-      right: 16px;
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--danger);
-      transition: background 0.3s;
-    }
-
-    #dot-conexion.conectado { background: var(--accent); }
-  </style>
+  /* ── General ── */
+  .tag { background: var(--surface); border: 1px solid var(--border); border-radius: 99px; padding: 6px 14px; font-size: .85rem; color: var(--muted); }
+  .alias-tag { color: var(--accent); font-weight: 700; }
+</style>
 </head>
 <body>
 
-  <!-- Indicador de conexión en tiempo real -->
-  <div id="dot-conexion" title="Estado de conexión"></div>
-
-  <!-- ── Pantalla 1: Login ──────────────────────────────────────────────────── -->
-  <div id="pantalla-login">
-    <p class="logo-marca">Congreso 2025</p>
-
-    <h1 class="titulo-bienvenida">
-      ¿Estás<br /><span>listo para</span><br />competir?
-    </h1>
-
-    <p class="subtitulo">
-      Sé uno de los primeros 20 en presionar<br />cuando el host dé la señal.
-    </p>
-
-    <div class="form-group">
-      <label for="input-alias">Tu nombre o alias</label>
-      <input
-        type="text"
-        id="input-alias"
-        placeholder="Ej: MariaPérez"
-        maxlength="30"
-        autocomplete="off"
-        autocorrect="off"
-        autocapitalize="words"
-        spellcheck="false"
-      />
-    </div>
-
-    <button class="btn btn-primary" id="btn-unirse">
-      Entrar al juego →
-    </button>
+<!-- ① Login -->
+<div class="screen active" id="screen-login">
+  <h1>🧪 Congreso</h1>
+  <p>Ingresá tu nombre para unirte al juego</p>
+  <div class="input-group">
+    <input type="text" id="input-alias" placeholder="Tu nombre o apodo" maxlength="30" autocomplete="off">
+    <button class="btn-primary" id="btn-unirse">Unirme al juego</button>
   </div>
+</div>
 
-  <!-- ── Pantalla 2: Juego ──────────────────────────────────────────────────── -->
-  <div id="pantalla-juego">
+<!-- ② Sala de espera -->
+<div class="screen" id="screen-espera">
+  <div class="avatar pulse" id="avatar-letra">?</div>
+  <h2>¡Hola, <span id="nombre-espera">-</span>!</h2>
+  <p style="color:var(--muted);margin-top:8px;">Esperando que el host inicie una pregunta…</p>
+  <br>
+  <div class="tag">🏆 Tu puntaje: <strong id="puntaje-espera">0</strong> pts</div>
+</div>
 
-    <div class="jugador-info">
-      <div class="jugador-avatar" id="avatar-inicial">?</div>
-      <span class="jugador-nombre" id="label-alias">Jugador</span>
+<!-- ③ Fase botón: presionar para ganar cupo -->
+<div class="screen" id="screen-boton">
+  <p class="tag" style="margin-bottom:6px;">¡Nueva pregunta!</p>
+  <div class="pregunta-texto" id="pregunta-boton-texto">Cargando pregunta…</div>
+  <button id="btn-presionar">
+    <div>
+      ¡PRESIONÁ!
+      <div class="sub">Sé de los primeros</div>
     </div>
-
-    <div class="estado-badge esperando" id="badge-estado">
-      <span class="pulso gris" id="pulso"></span>
-      <span id="texto-estado">Esperando que el host inicie...</span>
-    </div>
-
-    <!-- El botón gigante — protagonista de la UI -->
-    <button
-      id="btn-juego"
-      class="estado-espera"
-      disabled
-      aria-label="Botón principal del juego"
-    >
-      <span class="btn-icono" id="btn-icono">⏳</span>
-      <span id="btn-texto">ESPERA LA SEÑAL</span>
-      <span class="btn-subtexto" id="btn-subtexto">El host aún no ha iniciado</span>
-    </button>
-
-    <!-- Resultado (aparece tras presionar) -->
-    <div id="resultado">
-      <div class="resultado-posicion" id="resultado-posicion"></div>
-      <div class="resultado-etiqueta" id="resultado-etiqueta"></div>
-      <div class="resultado-mensaje" id="resultado-mensaje"></div>
-    </div>
-
+  </button>
+  <div class="cupos-bar">
+    <span>Cupos: </span>
+    <span class="cupos-count"><span id="cupos-tomados">0</span>/<span id="cupos-max">20</span></span>
   </div>
+</div>
 
-  <!-- Notificación flotante -->
-  <div id="notificacion"></div>
+<!-- ④ En cola, esperando turno -->
+<div class="screen" id="screen-cola">
+  <div class="posicion-badge">
+    <span id="posicion-num">?</span>
+    <span>en cola</span>
+  </div>
+  <h2>¡Lograste un cupo!</h2>
+  <p style="color:var(--muted);text-align:center;">Esperá que quien está respondiendo termine.<br>Si se equivoca, ¡es tu turno!</p>
+  <div class="tag" id="respondiendo-tag">Respondiendo ahora: …</div>
+</div>
 
-  <script>
-    // ─── Elementos DOM ──────────────────────────────────────────────────────────
-    const pantallaLogin  = document.getElementById("pantalla-login");
-    const pantallaJuego  = document.getElementById("pantalla-juego");
-    const inputAlias     = document.getElementById("input-alias");
-    const btnUnirse      = document.getElementById("btn-unirse");
-    const btnJuego       = document.getElementById("btn-juego");
-    const labelAlias     = document.getElementById("label-alias");
-    const avatarInicial  = document.getElementById("avatar-inicial");
-    const badgeEstado    = document.getElementById("badge-estado");
-    const pulso          = document.getElementById("pulso");
-    const textoEstado    = document.getElementById("texto-estado");
-    const btnIcono       = document.getElementById("btn-icono");
-    const btnTexto       = document.getElementById("btn-texto");
-    const btnSubtexto    = document.getElementById("btn-subtexto");
-    const divResultado   = document.getElementById("resultado");
-    const rPosicion      = document.getElementById("resultado-posicion");
-    const rEtiqueta      = document.getElementById("resultado-etiqueta");
-    const rMensaje       = document.getElementById("resultado-mensaje");
-    const dotConexion    = document.getElementById("dot-conexion");
-    const notificacion   = document.getElementById("notificacion");
+<!-- ⑤ Tu turno: responder -->
+<div class="screen" id="screen-responder">
+  <p class="tag" style="color:var(--green);font-weight:700;">⚡ ¡ES TU TURNO!</p>
+  <div class="pregunta-box" id="pregunta-responder-texto">-</div>
+  <div class="timer-bar"><div class="timer-fill" id="timer-fill" style="width:100%"></div></div>
+  <div class="opciones" id="opciones-container"></div>
+</div>
 
-    // ─── Estado local del jugador ────────────────────────────────────────────
-    let miAlias = "";
-    let yaPresione = false; // bandera anti-spam local
+<!-- ⑥ Resultado de tu respuesta -->
+<div class="screen" id="screen-resultado-resp">
+  <div class="resultado-icon" id="resultado-icon">-</div>
+  <div id="resultado-puntos-wrap" style="display:none">
+    <div class="resultado-puntos" id="resultado-puntos">+0</div>
+    <div class="resultado-label">puntos ganados</div>
+  </div>
+  <p id="resultado-texto" style="color:var(--muted);font-size:1rem;"></p>
+  <div class="tag">🏆 Total: <strong id="resultado-total">0</strong> pts</div>
+</div>
 
-    // ─── Conexión Socket.io ──────────────────────────────────────────────────
-    // La URL vacía conecta al mismo servidor que sirvió la página
-    const socket = io({ autoConnect: true, reconnectionAttempts: 10 });
+<script>
+const socket = io();
 
-    // ─── Helpers UI ──────────────────────────────────────────────────────────
+let miAlias = "";
+let miSocketId = null;
+let timerInterval = null;
+let tiempoTotal = 15;
+let puntajeMio = 0;
+let posicionEnCola = null;
 
-    /** Muestra un mensaje flotante temporalmente */
-    function mostrarNotificacion(msg, duracion = 2500) {
-      notificacion.textContent = msg;
-      notificacion.classList.add("visible");
-      setTimeout(() => notificacion.classList.remove("visible"), duracion);
-    }
+// ── Utilidades ──
+function mostrar(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
 
-    /** Pone el botón de juego en estado "espera" */
-    function btnModoEspera() {
-      btnJuego.disabled = true;
-      btnJuego.className = "estado-espera";
-      btnIcono.textContent = "⏳";
-      btnTexto.textContent = "ESPERA LA SEÑAL";
-      btnSubtexto.textContent = "El host aún no ha iniciado";
-    }
+function actualizarPuntaje(puntajes) {
+  if (!miSocketId) return;
+  const mio = puntajes.find(p => p.socketId === miSocketId);
+  if (mio) {
+    puntajeMio = mio.puntos;
+    document.getElementById('puntaje-espera').textContent = puntajeMio;
+    document.getElementById('resultado-total').textContent = puntajeMio;
+  }
+}
 
-    /** Pone el botón en estado "¡listo para presionar!" */
-    function btnModoListo() {
-      btnJuego.disabled = false;
-      btnJuego.className = "estado-listo";
-      btnIcono.textContent = "⚡";
-      btnTexto.textContent = "¡PRESIONA YA!";
-      btnSubtexto.textContent = "¡Toca el botón ahora!";
-    }
+// ── Login ──
+document.getElementById('btn-unirse').addEventListener('click', () => {
+  const alias = document.getElementById('input-alias').value.trim();
+  if (!alias) { document.getElementById('input-alias').focus(); return; }
+  miAlias = alias;
+  socket.emit('unirse', { alias });
+  document.getElementById('btn-unirse').disabled = true;
+});
+document.getElementById('input-alias').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('btn-unirse').click();
+});
 
-    /** Pone el botón en modo "enviado/espera resultado" */
-    function btnModoEnviado() {
-      btnJuego.disabled = true;
-      btnJuego.className = "estado-enviado";
-      btnIcono.textContent = "📡";
-      btnTexto.textContent = "¡Enviado!";
-      btnSubtexto.textContent = "Esperando resultados...";
-    }
+// ── Socket: unido ──
+socket.on('unido', ({ alias, fase, puntajes }) => {
+  miAlias = alias;
+  miSocketId = socket.id;
+  document.getElementById('nombre-espera').textContent = alias;
+  document.getElementById('avatar-letra').textContent = alias[0].toUpperCase();
+  actualizarPuntaje(puntajes);
 
-    /** Actualiza el badge de estado */
-    function actualizarBadge(tipo, texto) {
-      badgeEstado.className = `estado-badge ${tipo}`;
-      textoEstado.textContent = texto;
-      pulso.className = `pulso ${tipo === "activo" ? "verde" : "gris"}`;
-    }
+  if (fase === 'boton') {
+    // llegó tarde pero hay pregunta activa
+    mostrar('screen-espera');
+  } else {
+    mostrar('screen-espera');
+  }
+});
 
-    // ─── Eventos de Conexión ──────────────────────────────────────────────────
-    socket.on("connect", () => {
-      dotConexion.className = "conectado";
-      // Si ya teníamos alias, reconectarse automáticamente
-      if (miAlias) {
-        socket.emit("unirse", { alias: miAlias });
-      }
+// ── Socket: estado actual ──
+socket.on('estado_actual', ({ fase, puntajes }) => {
+  actualizarPuntaje(puntajes || []);
+});
+
+// ── Socket: fase botón ──
+socket.on('fase_boton', ({ pregunta, max }) => {
+  document.getElementById('pregunta-boton-texto').textContent = pregunta.texto;
+  document.getElementById('cupos-max').textContent = max;
+  document.getElementById('cupos-tomados').textContent = '0';
+
+  const btn = document.getElementById('btn-presionar');
+  btn.disabled = false;
+  btn.querySelector('div').innerHTML = '¡PRESIONÁ!<div class="sub">Sé de los primeros</div>';
+
+  mostrar('screen-boton');
+});
+
+// ── Presionar botón ──
+document.getElementById('btn-presionar').addEventListener('click', () => {
+  socket.emit('presionar_boton');
+  document.getElementById('btn-presionar').disabled = true;
+});
+
+socket.on('resultado_boton', ({ exito, posicion, razon }) => {
+  if (exito) {
+    posicionEnCola = posicion;
+    document.getElementById('posicion-num').textContent = posicion;
+    document.getElementById('respondiendo-tag').textContent = 'Esperando turno…';
+    mostrar('screen-cola');
+  } else {
+    const btn = document.getElementById('btn-presionar');
+    btn.querySelector('div').innerHTML = `Ya no podés<div class="sub">${razon}</div>`;
+  }
+});
+
+// ── Actualizar cupos en tiempo real ──
+socket.on('actualizar_cupos', ({ total, max }) => {
+  document.getElementById('cupos-tomados').textContent = total;
+  document.getElementById('cupos-max').textContent = max;
+});
+
+// ── Alguien está respondiendo (se ve en cola) ──
+socket.on('turno_respondiendo', ({ alias, socketId }) => {
+  const tag = document.getElementById('respondiendo-tag');
+  if (socketId === miSocketId) {
+    // es nuestro turno — el evento tu_turno lo maneja
+  } else {
+    tag.textContent = `Respondiendo ahora: ${alias}`;
+  }
+});
+
+// ── Es nuestro turno ──
+socket.on('tu_turno', ({ pregunta, tiempo }) => {
+  tiempoTotal = tiempo;
+  document.getElementById('pregunta-responder-texto').textContent = pregunta.texto;
+
+  const container = document.getElementById('opciones-container');
+  container.innerHTML = '';
+  pregunta.opciones.forEach(op => {
+    const btn = document.createElement('button');
+    btn.className = 'opcion';
+    btn.dataset.letra = op.letra;
+    btn.innerHTML = `<span class="letra">${op.letra}</span>${op.texto}`;
+    btn.addEventListener('click', () => {
+      container.querySelectorAll('.opcion').forEach(b => b.disabled = true);
+      socket.emit('responder', { letra: op.letra });
     });
+    container.appendChild(btn);
+  });
 
-    socket.on("disconnect", () => {
-      dotConexion.className = "";
-      mostrarNotificacion("Conexión perdida, reconectando...", 4000);
-    });
+  iniciarTimer(tiempo);
+  mostrar('screen-responder');
+});
 
-    // ─── Sincronización inicial del estado ────────────────────────────────────
-    socket.on("estado_actual", ({ ronda }) => {
-      // Si la ronda ya está activa cuando entramos, actualizamos la UI
-      if (ronda === "activa" && miAlias && !yaPresione) {
-        btnModoListo();
-        actualizarBadge("activo", "¡Ronda en curso! ¡Presiona ya!");
-      }
-    });
+function iniciarTimer(seg) {
+  clearInterval(timerInterval);
+  const fill = document.getElementById('timer-fill');
+  const inicio = Date.now();
+  const total = seg * 1000;
+  timerInterval = setInterval(() => {
+    const transcurrido = Date.now() - inicio;
+    const pct = Math.max(0, 100 - (transcurrido / total * 100));
+    fill.style.width = pct + '%';
+    if (pct < 30) fill.style.background = 'var(--red)';
+    else if (pct < 60) fill.style.background = 'var(--accent2)';
+    else fill.style.background = 'var(--accent)';
+    if (pct <= 0) clearInterval(timerInterval);
+  }, 100);
+}
 
-    // ─── Flujo del Jugador ────────────────────────────────────────────────────
+// ── Resultado de mi respuesta ──
+socket.on('resultado_respuesta', ({ correcto, letra }) => {
+  clearInterval(timerInterval);
+  if (!correcto) {
+    document.getElementById('resultado-icon').textContent = '❌';
+    document.getElementById('resultado-puntos-wrap').style.display = 'none';
+    document.getElementById('resultado-texto').textContent = 'Respuesta incorrecta. ¡La próxima te sale!';
+    mostrar('screen-resultado-resp');
+  }
+});
 
-    /** Validación y envío del alias */
-    function manejarUnirse() {
-      const alias = inputAlias.value.trim();
-      if (!alias) {
-        inputAlias.focus();
-        mostrarNotificacion("Escribe tu nombre o alias para entrar.");
-        return;
-      }
-      miAlias = alias;
-      socket.emit("unirse", { alias });
-    }
+// ── Resultado global: alguien respondió bien ──
+socket.on('mostrar_resultado', ({ correcto, alias, puntosGanados, puntajes }) => {
+  clearInterval(timerInterval);
+  actualizarPuntaje(puntajes || []);
 
-    socket.on("unido", ({ alias, ronda }) => {
-      // Actualizar UI con alias confirmado por el servidor
-      labelAlias.textContent = alias;
-      avatarInicial.textContent = alias.charAt(0).toUpperCase();
-      miAlias = alias;
+  const esYo = alias === miAlias;
+  if (correcto && esYo) {
+    document.getElementById('resultado-icon').textContent = '✅';
+    document.getElementById('resultado-puntos').textContent = `+${puntosGanados}`;
+    document.getElementById('resultado-puntos-wrap').style.display = 'block';
+    document.getElementById('resultado-texto').textContent = '¡Respuesta correcta!';
+    document.getElementById('resultado-total').textContent = puntajeMio;
+    mostrar('screen-resultado-resp');
+  } else if (!esYo) {
+    // Mostrar quién ganó
+    document.getElementById('resultado-icon').textContent = '🏆';
+    document.getElementById('resultado-puntos-wrap').style.display = 'none';
+    document.getElementById('resultado-texto').textContent = correcto
+      ? `¡${alias} respondió correctamente!`
+      : 'Nadie respondió correctamente esta vez.';
+    mostrar('screen-resultado-resp');
+  }
+});
 
-      // Mostrar pantalla de juego
-      pantallaLogin.style.display = "none";
-      pantallaJuego.style.display = "flex";
+socket.on('tiempo_agotado', () => {
+  clearInterval(timerInterval);
+});
 
-      // Ajustar estado según la ronda actual
-      if (ronda === "activa" && !yaPresione) {
-        btnModoListo();
-        actualizarBadge("activo", "¡Ronda activa! ¡Toca ya!");
-      } else {
-        btnModoEspera();
-        actualizarBadge("esperando", "Esperando que el host inicie...");
-      }
-    });
+// ── Respuesta incorrecta de otro ──
+socket.on('respuesta_incorrecta', ({ alias }) => {
+  if (alias !== miAlias) {
+    const tag = document.getElementById('respondiendo-tag');
+    tag.textContent = `${alias} falló — siguiendo con la cola…`;
+  }
+});
 
-    /** El host inició la ronda */
-    socket.on("ronda_iniciada", () => {
-      yaPresione = false;
-      divResultado.style.display = "none";
-      btnModoListo();
-      actualizarBadge("activo", "¡La ronda ha comenzado!");
-    });
+// ── Volver al lobby / siguiente pregunta ──
+socket.on('volver_lobby', ({ puntajes }) => {
+  clearInterval(timerInterval);
+  actualizarPuntaje(puntajes || []);
+  mostrar('screen-espera');
+});
 
-    /** El jugador presiona el botón grande */
-    btnJuego.addEventListener("click", () => {
-      if (yaPresione || btnJuego.disabled) return;
-
-      // Bloqueo local inmediato para evitar doble toque
-      yaPresione = true;
-      btnModoEnviado();
-      actualizarBadge("enviado", "¡Enviado! Esperando resultado...");
-
-      socket.emit("presionar_boton");
-    });
-
-    /** Respuesta del servidor tras presionar */
-    socket.on("resultado_boton", ({ exito, posicion, razon }) => {
-      divResultado.style.display = "block";
-
-      if (exito) {
-        divResultado.className = "ganador";
-        rPosicion.textContent = `#${posicion}`;
-        rEtiqueta.textContent = "POSICIÓN OBTENIDA";
-        rMensaje.textContent =
-          posicion <= 3
-            ? "🏆 ¡Increíble! Estás en el top 3."
-            : "🎉 ¡Lo lograste! Eres uno de los 20 ganadores.";
-      } else {
-        divResultado.className = "perdedor";
-        rPosicion.textContent = "😔";
-        rEtiqueta.textContent = "NO ESTA VEZ";
-        rMensaje.textContent = razon || "Los 20 cupos ya fueron llenados. ¡Suerte en la próxima!";
-      }
-    });
-
-    /** La ronda terminó (llegamos a 20) */
-    socket.on("ronda_terminada", () => {
-      if (!yaPresione) {
-        btnModoEspera();
-        btnIcono.textContent = "🏁";
-        btnTexto.textContent = "RONDA TERMINADA";
-        btnSubtexto.textContent = "Los 20 cupos ya fueron llenados";
-        actualizarBadge("esperando", "Ronda finalizada");
-      }
-    });
-
-    /** El host reinicia todo */
-    socket.on("juego_reiniciado", () => {
-      yaPresione = false;
-      divResultado.style.display = "none";
-      btnModoEspera();
-      actualizarBadge("esperando", "Esperando que el host inicie...");
-    });
-
-    // ─── Eventos del formulario de login ──────────────────────────────────────
-    btnUnirse.addEventListener("click", manejarUnirse);
-
-    inputAlias.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") manejarUnirse();
-    });
-  </script>
+// ── Juego reiniciado ──
+socket.on('juego_reiniciado', () => {
+  clearInterval(timerInterval);
+  puntajeMio = 0;
+  document.getElementById('puntaje-espera').textContent = 0;
+  mostrar('screen-espera');
+});
+</script>
 </body>
 </html>
