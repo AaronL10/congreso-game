@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Host — Panel de Control</title>
+
+  <!-- Socket.io desde el mismo CDN -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <style>
+    /* ─── Reset & Tokens ────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #070710;
+      --panel:       #0e0e1a;
+      --border:      #1e1e35;
+      --txt:         #e8e8f0;
+      --txt-dim:     #5a5a78;
+      --accent:      #7c5cfc;   /* violeta — autoridad del host */
+      --accent-glow: rgba(124, 92, 252, 0.25);
+      --green:       #c8f542;
+      --green-glow:  rgba(200, 245, 66, 0.15);
+      --gold:        #ffd700;
+      --silver:      #c0c0c0;
+      --bronze:      #cd7f32;
+      --danger:      #ff4d6d;
+      --radius:      14px;
+      --font:        'Segoe UI', system-ui, -apple-system, sans-serif;
+      --font-mono:   'Courier New', Courier, monospace;
+    }
+
+    html { font-size: 16px; }
+
+    body {
+      background: var(--bg);
+      color: var(--txt);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      grid-template-rows: auto 1fr;
+      gap: 0;
+    }
+
+    /* ─── Header ────────────────────────────────────────────────────────────── */
+    header {
+      grid-column: 1 / -1;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .header-brand {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .header-brand .eyebrow {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: var(--txt-dim);
+      font-weight: 600;
+    }
+
+    .header-brand h1 {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: var(--txt);
+    }
+
+    .header-brand h1 span { color: var(--accent); }
+
+    .header-stats {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .stat-chip {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .stat-chip .num {
+      font-size: 28px;
+      font-weight: 900;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-chip .lbl {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--txt-dim);
+      font-weight: 600;
+    }
+
+    .stat-chip.ganadores .num { color: var(--green); }
+    .stat-chip.restantes .num { color: var(--accent); }
+
+    /* Badge de estado de la ronda */
+    #badge-ronda {
+      padding: 8px 18px;
+      border-radius: 50px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      border: 2px solid transparent;
+      transition: all 0.3s ease;
+    }
+
+    #badge-ronda.esperando { background: rgba(90,90,120,0.2); border-color: var(--border); color: var(--txt-dim); }
+    #badge-ronda.activa    { background: rgba(200,245,66,0.1); border-color: var(--green); color: var(--green); animation: parpadear 1.5s ease infinite; }
+    #badge-ronda.terminada { background: rgba(255,77,109,0.1); border-color: var(--danger); color: var(--danger); }
+
+    @keyframes parpadear {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.6; }
+    }
+
+    /* ─── Panel lateral de controles ────────────────────────────────────────── */
+    #panel-controles {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overflow-y: auto;
+    }
+
+    .seccion-titulo {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--txt-dim);
+      font-weight: 700;
+    }
+
+    /* ─── Botones del Host ───────────────────────────────────────────────────── */
+    .btn-host {
+      width: 100%;
+      padding: 18px 20px;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 16px;
+      font-weight: 700;
+      font-family: var(--font);
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.2s, box-shadow 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-align: left;
+    }
+
+    .btn-host:active:not(:disabled) { transform: scale(0.98); }
+    .btn-host:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .btn-host .btn-icono { font-size: 22px; flex-shrink: 0; }
+
+    .btn-host .btn-info { display: flex; flex-direction: column; gap: 2px; }
+    .btn-host .btn-label { font-size: 15px; }
+    .btn-host .btn-desc  { font-size: 11px; font-weight: 400; opacity: 0.65; }
+
+    #btn-iniciar {
+      background: var(--green);
+      color: #060610;
+      box-shadow: 0 4px 24px var(--green-glow);
+    }
+
+    #btn-iniciar:not(:disabled):hover {
+      box-shadow: 0 4px 40px rgba(200,245,66,0.4);
+    }
+
+    #btn-reiniciar {
+      background: transparent;
+      color: var(--txt-dim);
+      border: 2px solid var(--border);
+    }
+
+    #btn-reiniciar:not(:disabled):hover {
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+
+    /* ─── Instrucciones en el panel ──────────────────────────────────────────── */
+    .instrucciones {
+      background: rgba(124,92,252,0.08);
+      border: 1px solid rgba(124,92,252,0.2);
+      border-radius: var(--radius);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .instrucciones h3 {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+    }
+
+    .instrucciones ol {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      counter-reset: paso;
+    }
+
+    .instrucciones li {
+      counter-increment: paso;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--txt-dim);
+      line-height: 1.4;
+    }
+
+    .instrucciones li::before {
+      content: counter(paso);
+      background: rgba(124,92,252,0.3);
+      color: var(--accent);
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    /* ─── Área del Leaderboard ───────────────────────────────────────────────── */
+    #area-leaderboard {
+      padding: 28px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      overflow-y: auto;
+    }
+
+    .leaderboard-header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+
+    .leaderboard-header h2 {
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+    }
+
+    .leaderboard-header .subtitulo {
+      font-size: 14px;
+      color: var(--txt-dim);
+    }
+
+    /* Grid de ganadores */
+    #lista-ganadores {
+      display: grid;
+      /* 2 columnas en pantallas grandes, 1 en chicas */
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 10px;
+    }
+
+    /* Slots vacíos (1-20 preasignados) */
+    .slot {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      transition: all 0.3s ease;
+      min-height: 64px;
+    }
+
+    .slot.ocupado {
+      border-color: rgba(200,245,66,0.3);
+      background: rgba(200,245,66,0.04);
+      animation: entrar 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .slot.ocupado.top-3 {
+      border-color: rgba(255,215,0,0.4);
+      background: rgba(255,215,0,0.05);
+    }
+
+    @keyframes entrar {
+      from { opacity: 0; transform: scale(0.9) translateY(-8px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .slot-numero {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 800;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .slot.vacio .slot-numero {
+      background: var(--border);
+      color: var(--txt-dim);
+      font-size: 13px;
+    }
+
+    .slot.ocupado .slot-numero {
+      background: rgba(200,245,66,0.15);
+      color: var(--green);
+    }
+
+    .slot.ocupado.top-3 .slot-numero {
+      background: rgba(255,215,0,0.15);
+      color: var(--gold);
+    }
+
+    .slot-alias {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--txt);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .slot.vacio .slot-alias {
+      color: var(--border);
+      font-size: 13px;
+      font-weight: 500;
+      font-family: var(--font-mono);
+    }
+
+    .slot-badge {
+      margin-left: auto;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    /* ─── Estado vacío del leaderboard ──────────────────────────────────────── */
+    #estado-vacio {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--txt-dim);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #estado-vacio .icono { font-size: 48px; }
+    #estado-vacio p { font-size: 15px; max-width: 300px; line-height: 1.5; }
+
+    /* ─── Barra de progreso ──────────────────────────────────────────────────── */
+    .progreso-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .progreso-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--txt-dim);
+      font-weight: 600;
+    }
+
+    .barra-fondo {
+      width: 100%;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    #barra-progreso {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--green));
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+
+    /* ─── Pantalla de victoria (cuando llega a 20) ───────────────────────────── */
+    #pantalla-victoria {
+      display: none;
+      grid-column: 1 / -1;
+      position: fixed;
+      inset: 0;
+      background: rgba(7,7,16,0.92);
+      backdrop-filter: blur(8px);
+      z-index: 50;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 24px;
+      animation: aparecer 0.5s ease;
+    }
+
+    #pantalla-victoria.visible { display: flex; }
+
+    .victoria-titulo {
+      font-size: clamp(36px, 6vw, 64px);
+      font-weight: 900;
+      letter-spacing: -0.05em;
+      text-align: center;
+      color: var(--green);
+      text-shadow: 0 0 60px rgba(200,245,66,0.4);
+    }
+
+    .victoria-subtitulo {
+      font-size: 18px;
+      color: var(--txt-dim);
+    }
+
+    #btn-cerrar-victoria {
+      padding: 14px 32px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 50px;
+      font-size: 15px;
+      font-weight: 700;
+      font-family: var(--font);
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.2s;
+    }
+
+    #btn-cerrar-victoria:hover { opacity: 0.85; }
+
+    @keyframes aparecer {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="header-brand">
+      <span class="eyebrow">Panel de Control</span>
+      <h1>Juego en <span>Tiempo Real</span></h1>
+    </div>
+
+    <div class="header-stats">
+      <div class="stat-chip ganadores">
+        <span class="num" id="count-ganadores">0</span>
+        <span class="lbl">Ganadores</span>
+      </div>
+      <div class="stat-chip restantes">
+        <span class="num" id="count-restantes">20</span>
+        <span class="lbl">Cupos libres</span>
+      </div>
+      <div id="badge-ronda" class="esperando">● Esperando</div>
+    </div>
+  </header>
+
+  <!-- ── Panel de Controles ─────────────────────────────────────────────────── -->
+  <aside id="panel-controles">
+    <p class="seccion-titulo">Controles</p>
+
+    <button class="btn-host" id="btn-iniciar">
+      <span class="btn-icono">▶</span>
+      <span class="btn-info">
+        <span class="btn-label">Iniciar Ronda</span>
+        <span class="btn-desc">Activa los botones de todos los jugadores</span>
+      </span>
+    </button>
+
+    <button class="btn-host" id="btn-reiniciar">
+      <span class="btn-icono">↺</span>
+      <span class="btn-info">
+        <span class="btn-label">Reiniciar Todo</span>
+        <span class="btn-desc">Limpia la lista y vuelve al inicio</span>
+      </span>
+    </button>
+
+    <!-- Barra de progreso -->
+    <div class="progreso-wrap">
+      <div class="progreso-label">
+        <span>Progreso</span>
+        <span><span id="prog-num">0</span> / 20</span>
+      </div>
+      <div class="barra-fondo">
+        <div id="barra-progreso"></div>
+      </div>
+    </div>
+
+    <div class="instrucciones">
+      <h3>Flujo sugerido</h3>
+      <ol>
+        <li>Muestra el código QR en pantalla para que los asistentes escaneen.</li>
+        <li>Espera a que los jugadores ingresen su alias.</li>
+        <li>Da la señal verbal y presiona <strong>Iniciar Ronda</strong>.</li>
+        <li>Espera a que se llenen los 20 cupos.</li>
+        <li>Anuncia a los ganadores y presiona <strong>Reiniciar</strong> para la próxima ronda.</li>
+      </ol>
+    </div>
+  </aside>
+
+  <!-- ── Área del Leaderboard ───────────────────────────────────────────────── -->
+  <main id="area-leaderboard">
+    <div class="leaderboard-header">
+      <h2>Leaderboard</h2>
+      <span class="subtitulo">Primeros 20 en presionar</span>
+    </div>
+
+    <div id="lista-ganadores">
+      <!-- Los slots se generan por JS -->
+    </div>
+  </main>
+
+  <!-- ── Overlay de Victoria ────────────────────────────────────────────────── -->
+  <div id="pantalla-victoria">
+    <div class="victoria-titulo">🏁 ¡Ronda Completa!</div>
+    <div class="victoria-subtitulo">Los 20 ganadores han sido registrados.</div>
+    <button id="btn-cerrar-victoria">Ver resultados finales</button>
+  </div>
+
+  <script>
+    // ─── Conexión Socket.io ──────────────────────────────────────────────────
+    const socket = io();
+
+    // ─── Elementos DOM ───────────────────────────────────────────────────────
+    const btnIniciar        = document.getElementById("btn-iniciar");
+    const btnReiniciar      = document.getElementById("btn-reiniciar");
+    const listaGanadores    = document.getElementById("lista-ganadores");
+    const countGanadores    = document.getElementById("count-ganadores");
+    const countRestantes    = document.getElementById("count-restantes");
+    const badgeRonda        = document.getElementById("badge-ronda");
+    const barraProgreso     = document.getElementById("barra-progreso");
+    const progNum           = document.getElementById("prog-num");
+    const pantallaVictoria  = document.getElementById("pantalla-victoria");
+    const btnCerrarVictoria = document.getElementById("btn-cerrar-victoria");
+
+    // ─── Estado local del host ───────────────────────────────────────────────
+    const MAX = 20;
+    let ganadoresActuales = [];
+
+    // ─── Inicializar grid vacío de slots ─────────────────────────────────────
+    function construirSlots() {
+      listaGanadores.innerHTML = "";
+      for (let i = 1; i <= MAX; i++) {
+        const div = document.createElement("div");
+        div.className = "slot vacio";
+        div.id = `slot-${i}`;
+        div.innerHTML = `
+          <div class="slot-numero">${i}</div>
+          <div class="slot-alias">— vacío —</div>
+        `;
+        listaGanadores.appendChild(div);
+      }
+    }
+
+    construirSlots(); // Construir al cargar
+
+    // ─── Actualizar el slot de una posición con el alias del ganador ─────────
+    function rellenarSlot(posicion, alias) {
+      const slot = document.getElementById(`slot-${posicion}`);
+      if (!slot) return;
+
+      slot.className = `slot ocupado${posicion <= 3 ? " top-3" : ""}`;
+
+      const medalla = posicion === 1 ? "🥇" : posicion === 2 ? "🥈" : posicion === 3 ? "🥉" : "✅";
+
+      slot.innerHTML = `
+        <div class="slot-numero">${posicion}</div>
+        <div class="slot-alias">${alias}</div>
+        <div class="slot-badge">${medalla}</div>
+      `;
+    }
+
+    // ─── Actualizar estadísticas y barra de progreso ─────────────────────────
+    function actualizarStats(total) {
+      countGanadores.textContent = total;
+      countRestantes.textContent = MAX - total;
+      barraProgreso.style.width = `${(total / MAX) * 100}%`;
+      progNum.textContent = total;
+    }
+
+    // ─── Actualizar badge de estado de la ronda ──────────────────────────────
+    function actualizarBadge(estado) {
+      badgeRonda.className = estado;
+      const textos = {
+        esperando: "● Esperando",
+        activa:    "● Ronda Activa",
+        terminada: "● Terminada",
+      };
+      badgeRonda.textContent = textos[estado] || estado;
+    }
+
+    // ─── Sincronización inicial ───────────────────────────────────────────────
+    socket.on("estado_actual", ({ ronda, ganadores }) => {
+      ganadoresActuales = ganadores || [];
+      construirSlots();
+      ganadoresActuales.forEach(({ posicion, alias }) => rellenarSlot(posicion, alias));
+      actualizarStats(ganadoresActuales.length);
+      actualizarBadge(ronda);
+
+      // Ajustar estado de botones según la ronda
+      if (ronda === "activa") {
+        btnIniciar.disabled = true;
+      }
+    });
+
+    // ─── Eventos de los botones del Host ─────────────────────────────────────
+
+    btnIniciar.addEventListener("click", () => {
+      if (!confirm("¿Iniciar la ronda ahora? Se resetearán los ganadores anteriores.")) return;
+      socket.emit("iniciar_ronda");
+    });
+
+    btnReiniciar.addEventListener("click", () => {
+      if (!confirm("¿Reiniciar todo? Esto borrará la lista de ganadores.")) return;
+      socket.emit("reiniciar_todo");
+    });
+
+    btnCerrarVictoria.addEventListener("click", () => {
+      pantallaVictoria.classList.remove("visible");
+    });
+
+    // ─── Respuesta del Servidor: Ronda iniciada ───────────────────────────────
+    socket.on("ronda_iniciada", () => {
+      ganadoresActuales = [];
+      construirSlots();
+      actualizarStats(0);
+      actualizarBadge("activa");
+      pantallaVictoria.classList.remove("visible");
+
+      // Durante la ronda activa, deshabilitar "Iniciar" para no spamear
+      btnIniciar.disabled = true;
+    });
+
+    // ─── Respuesta del Servidor: Nuevo ganador registrado ────────────────────
+    socket.on("actualizar_ganadores", ({ ganadores, total }) => {
+      ganadoresActuales = ganadores;
+
+      // Rellenar solo el último slot añadido (eficiencia: no re-renderizar todo)
+      const ultimo = ganadores[ganadores.length - 1];
+      if (ultimo) rellenarSlot(ultimo.posicion, ultimo.alias);
+
+      actualizarStats(total);
+    });
+
+    // ─── Respuesta del Servidor: Ronda terminada (20 ganadores) ──────────────
+    socket.on("ronda_terminada", ({ ganadores }) => {
+      ganadoresActuales = ganadores;
+      actualizarBadge("terminada");
+      btnIniciar.disabled = false;
+
+      // Mostrar overlay de victoria brevemente
+      pantallaVictoria.classList.add("visible");
+    });
+
+    // ─── Respuesta del Servidor: Juego reiniciado ─────────────────────────────
+    socket.on("juego_reiniciado", () => {
+      ganadoresActuales = [];
+      construirSlots();
+      actualizarStats(0);
+      actualizarBadge("esperando");
+      pantallaVictoria.classList.remove("visible");
+      btnIniciar.disabled = false;
+    });
+  </script>
+</body>
+</html>
