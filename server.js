@@ -48,9 +48,7 @@ io.on("connection", (socket) => {
 });
 
 
-httpServer.listen(PORT, () => {
-  console.log("Servidor en puerto " + PORT);
-});
+
 // ─── Estado Global ────────────────────────────────────────────────────────────
 let estado = {
   fase: "lobby",          // "lobby" | "boton" | "respondiendo" | "resultado" | "fin"
@@ -386,9 +384,11 @@ io.on("connection", (socket) => {
 });
 
 // ─── Arrancar servidor ────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+
 httpServer.listen(PORT, () => {
-  console.log(`✅ Servidor en http://localhost:${PORT}`);
-  console.log(`   Jugadores:  http://localhost:${PORT}/`);
-  console.log(`   Host:       http://localhost:${PORT}/host`);
-  console.log(`   Pantalla:   http://localhost:${PORT}/pantalla`);
+  console.log(`✅ Servidor en puerto ${PORT}`);
+  console.log(`   Jugadores:  /`);
+  console.log(`   Host:       /host`);
+  console.log(`   Pantalla:   /pantalla`);
 });
