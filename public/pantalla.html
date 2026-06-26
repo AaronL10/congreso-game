@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pantalla — Congreso</title>
+
+  <!-- Socket.io desde el mismo servidor -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <style>
+    /* ── Variables de diseño ──────────────────────────────────────────── */
+    :root {
+      --bg:          #0b0f1a;
+      --surface:     #111827;
+      --surface2:    #1a2235;
+      --border:      #1e2d45;
+      --accent:      #3b82f6;
+      --accent-glow: #3b82f640;
+      --gold:        #f59e0b;
+      --gold-soft:   #f59e0b20;
+      --green:       #22c55e;
+      --red:         #ef4444;
+      --text:        #f1f5f9;
+      --muted:       #64748b;
+      --radius:      12px;
+      --radius-lg:   20px;
+    }
+
+    /* ── Reset ─────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      grid-template-columns: 1fr 320px;
+      grid-template-areas:
+        "header  header"
+        "main    sidebar"
+        "footer  footer";
+      gap: 0;
+      overflow: hidden;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    header {
+      grid-area: header;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .logo-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+      flex-shrink: 0;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.6; transform: scale(0.85); }
+    }
+
+    .event-name {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--text);
+    }
+
+    .fase-badge {
+      padding: 5px 14px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+      transition: background 0.3s, color 0.3s, border-color 0.3s;
+    }
+
+    .fase-badge.lobby      { background: #1e2d45; color: var(--muted); border-color: var(--border); }
+    .fase-badge.boton      { background: #1e3a5f; color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
+    .fase-badge.respondiendo { background: #1a3323; color: var(--green); border-color: var(--green); }
+    .fase-badge.resultado  { background: #3b2a0a; color: var(--gold); border-color: var(--gold); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .jugadores-count {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    /* ── Área principal ──────────────────────────────────────────────────── */
+    main {
+      grid-area: main;
+      padding: 28px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overflow-y: auto;
+    }
+
+    /* ── Pantalla de espera (lobby) ──────────────────────────────────────── */
+    #vista-lobby {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      text-align: center;
+    }
+
+    .lobby-icon {
+      font-size: 4rem;
+      opacity: 0.25;
+    }
+
+    .lobby-title {
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--text);
+      opacity: 0.5;
+    }
+
+    .lobby-sub {
+      font-size: 1rem;
+      color: var(--muted);
+    }
+
+    /* ── Pregunta ────────────────────────────────────────────────────────── */
+    #vista-pregunta {
+      display: none;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .pregunta-numero {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .pregunta-texto {
+      font-size: clamp(1.2rem, 2.5vw, 1.8rem);
+      font-weight: 700;
+      line-height: 1.35;
+      color: var(--text);
+    }
+
+    /* ── Cupos ───────────────────────────────────────────────────────────── */
+    .cupos-bar-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .cupos-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .cupos-texto-num {
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .cupos-track {
+      height: 8px;
+      background: var(--surface2);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .cupos-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), #60a5fa);
+      border-radius: 999px;
+      transition: width 0.4s ease;
+      width: 0%;
+    }
+
+    /* ── Opciones A B C D ────────────────────────────────────────────────── */
+    .opciones-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .opcion {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      transition: border-color 0.3s, background 0.3s;
+    }
+
+    .opcion.correcta {
+      border-color: var(--green);
+      background: #0f2e1a;
+    }
+
+    .opcion-letra {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--border);
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      letter-spacing: 0;
+    }
+
+    .opcion.correcta .opcion-letra {
+      background: var(--green);
+      color: #fff;
+    }
+
+    .opcion-txt {
+      font-size: 0.95rem;
+      line-height: 1.4;
+      padding-top: 4px;
+      color: var(--text);
+    }
+
+    /* ── Panel: quién responde ───────────────────────────────────────────── */
+    .turno-panel {
+      background: var(--surface2);
+      border: 1px solid var(--green);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      animation: fadeIn 0.4s ease;
+    }
+
+    .turno-panel.oculto { display: none; }
+
+    .turno-icon {
+      font-size: 1.6rem;
+      flex-shrink: 0;
+    }
+
+    .turno-info { flex: 1; }
+
+    .turno-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--green);
+      margin-bottom: 2px;
+    }
+
+    .turno-alias {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    /* Temporizador circular */
+    .timer-wrap {
+      position: relative;
+      width: 52px;
+      height: 52px;
+      flex-shrink: 0;
+    }
+
+    .timer-wrap svg {
+      transform: rotate(-90deg);
+    }
+
+    .timer-track {
+      fill: none;
+      stroke: var(--surface);
+      stroke-width: 4;
+    }
+
+    .timer-arc {
+      fill: none;
+      stroke: var(--green);
+      stroke-width: 4;
+      stroke-linecap: round;
+      stroke-dasharray: 138.2; /* 2π × 22 */
+      stroke-dashoffset: 0;
+      transition: stroke-dashoffset 1s linear, stroke 0.3s;
+    }
+
+    .timer-num {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.95rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+
+    /* ── Banner de resultado ─────────────────────────────────────────────── */
+    #resultado-banner {
+      display: none;
+      background: var(--surface2);
+      border: 1px solid var(--gold);
+      border-radius: var(--radius-lg);
+      padding: 24px 28px;
+      text-align: center;
+      animation: slideUp 0.5s cubic-bezier(.16,1,.3,1);
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .resultado-titulo {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--gold);
+    }
+
+    .resultado-alias {
+      font-size: 2rem;
+      font-weight: 900;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .resultado-pts {
+      font-size: 1.1rem;
+      color: var(--gold);
+      font-weight: 700;
+    }
+
+    .resultado-correcta {
+      font-size: 0.9rem;
+      color: var(--green);
+      margin-top: 4px;
+    }
+
+    .sin-respuesta {
+      display: none;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    /* ── Sidebar: ranking ────────────────────────────────────────────────── */
+    aside {
+      grid-area: sidebar;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-header {
+      padding: 16px 20px 12px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .ranking-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .ranking-list::-webkit-scrollbar { width: 4px; }
+    .ranking-list::-webkit-scrollbar-track { background: transparent; }
+    .ranking-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .ranking-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      transition: background 0.2s;
+    }
+
+    .ranking-item:hover { background: var(--surface2); }
+
+    .ranking-pos {
+      width: 22px;
+      font-size: 0.7rem;
+      font-weight: 800;
+      color: var(--muted);
+      text-align: center;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .ranking-item:nth-child(1) .ranking-pos { color: #f59e0b; font-size: 0.85rem; }
+    .ranking-item:nth-child(2) .ranking-pos { color: #94a3b8; }
+    .ranking-item:nth-child(3) .ranking-pos { color: #b45309; }
+
+    .ranking-alias {
+      flex: 1;
+      font-size: 0.88rem;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--text);
+    }
+
+    .ranking-pts {
+      font-size: 0.82rem;
+      font-weight: 800;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+
+    .ranking-empty {
+      padding: 32px 20px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    footer {
+      grid-area: footer;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 8px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    .conexion-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+
+    .conexion-dot.desconectado { background: var(--red); }
+
+    /* ── Animaciones ─────────────────────────────────────────────────────── */
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    .anim-entrada { animation: fadeIn 0.35s ease; }
+
+    /* ── Responsive mínimo (pantalla chica) ──────────────────────────────── */
+    @media (max-width: 900px) {
+      body {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto auto;
+        grid-template-areas:
+          "header"
+          "main"
+          "sidebar"
+          "footer";
+      }
+      aside {
+        border-left: none;
+        border-top: 1px solid var(--border);
+        max-height: 220px;
+      }
+      .opciones-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── HEADER ──────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="header-left">
+      <div class="logo-dot"></div>
+      <span class="event-name">Congreso 2025</span>
+      <span class="fase-badge lobby" id="fase-badge">Esperando</span>
+    </div>
+    <div class="header-right">
+      <span class="jugadores-count">
+        👥 <span id="total-jugadores">0</span> jugador(es)
+      </span>
+    </div>
+  </header>
+
+  <!-- ── MAIN ────────────────────────────────────────────────────────────── -->
+  <main>
+
+    <!-- Vista lobby / espera -->
+    <div id="vista-lobby">
+      <div class="lobby-icon">🎯</div>
+      <div class="lobby-title">Esperando al host</div>
+      <div class="lobby-sub">La pregunta aparecerá aquí cuando comience la ronda.</div>
+    </div>
+
+    <!-- Vista pregunta activa -->
+    <div id="vista-pregunta">
+
+      <div class="pregunta-numero" id="pregunta-numero">Pregunta 1</div>
+      <div class="pregunta-texto" id="pregunta-texto"></div>
+
+      <!-- Cupos -->
+      <div class="cupos-bar-wrap">
+        <div class="cupos-label">
+          <span>Cupos utilizados</span>
+          <span class="cupos-texto-num"><span id="cupos-total">0</span> / <span id="cupos-max">0</span></span>
+        </div>
+        <div class="cupos-track"><div class="cupos-fill" id="cupos-fill"></div></div>
+      </div>
+
+      <!-- Opciones A B C D -->
+      <div class="opciones-grid" id="opciones-grid"></div>
+
+      <!-- Quién está respondiendo -->
+      <div class="turno-panel oculto" id="turno-panel">
+        <div class="turno-icon">🎙️</div>
+        <div class="turno-info">
+          <div class="turno-label">Respondiendo ahora</div>
+          <div class="turno-alias" id="turno-alias">—</div>
+        </div>
+        <div class="timer-wrap">
+          <svg viewBox="0 0 52 52" width="52" height="52">
+            <circle class="timer-track" cx="26" cy="26" r="22"/>
+            <circle class="timer-arc" id="timer-arc" cx="26" cy="26" r="22"/>
+          </svg>
+          <div class="timer-num" id="timer-num">15</div>
+        </div>
+      </div>
+
+      <!-- Banner resultado correcto -->
+      <div id="resultado-banner">
+        <div class="resultado-titulo">✅ Respuesta correcta</div>
+        <div class="resultado-alias" id="resultado-alias"></div>
+        <div class="resultado-pts" id="resultado-pts"></div>
+        <div class="resultado-correcta" id="resultado-correcta"></div>
+      </div>
+
+      <!-- Nadie respondió bien -->
+      <div class="sin-respuesta" id="sin-respuesta">
+        Ningún participante respondió correctamente esta vez.
+      </div>
+
+    </div><!-- /vista-pregunta -->
+
+  </main>
+
+  <!-- ── SIDEBAR: Ranking ─────────────────────────────────────────────────── -->
+  <aside>
+    <div class="sidebar-header">
+      <span>Ranking</span>
+      <span id="sidebar-total"></span>
+    </div>
+    <div class="ranking-list" id="ranking-list">
+      <div class="ranking-empty">Sin puntajes aún</div>
+    </div>
+  </aside>
+
+  <!-- ── FOOTER ──────────────────────────────────────────────────────────── -->
+  <footer>
+    <span>
+      <span class="conexion-dot" id="conexion-dot"></span>
+      <span id="conexion-txt">Conectado</span>
+    </span>
+    <span id="footer-info">pantalla.html · Socket.io</span>
+  </footer>
+
+
+  <!-- ── LÓGICA ──────────────────────────────────────────────────────────── -->
+  <script>
+    // ─── Constantes de UI ───────────────────────────────────────────────────
+    const TIEMPO_RESPUESTA = 15; // debe coincidir con server.js
+
+    const $ = id => document.getElementById(id);
+
+    // Nodos frecuentes
+    const faseBadge       = $("fase-badge");
+    const vistLobby       = $("vista-lobby");
+    const vistPregunta    = $("vista-pregunta");
+    const pregNumero      = $("pregunta-numero");
+    const pregTexto       = $("pregunta-texto");
+    const cuposTotal      = $("cupos-total");
+    const cuposMax        = $("cupos-max");
+    const cuposFill       = $("cupos-fill");
+    const opcionesGrid    = $("opciones-grid");
+    const turnoPanel      = $("turno-panel");
+    const turnoAlias      = $("turno-alias");
+    const timerArc        = $("timer-arc");
+    const timerNum        = $("timer-num");
+    const resultadoBanner = $("resultado-banner");
+    const resultadoAlias  = $("resultado-alias");
+    const resultadoPts    = $("resultado-pts");
+    const resultadoCorr   = $("resultado-correcta");
+    const sinRespuesta    = $("sin-respuesta");
+    const rankingList     = $("ranking-list");
+    const totalJugadores  = $("total-jugadores");
+    const conexionDot     = $("conexion-dot");
+    const conexionTxt     = $("conexion-txt");
+
+    // Estado local
+    let timerInterval = null;
+    let tiempoRestante = TIEMPO_RESPUESTA;
+    let preguntaIndex = 0;
+    const CIRCUNFERENCIA = 2 * Math.PI * 22; // 138.23
+
+    // ─── Helpers ────────────────────────────────────────────────────────────
+
+    function setFase(fase) {
+      const textos = {
+        lobby:        "Esperando",
+        boton:        "Botón activo",
+        respondiendo: "Respondiendo",
+        resultado:    "Resultado",
+        fin:          "Fin",
+      };
+      faseBadge.textContent = textos[fase] || fase;
+      faseBadge.className = `fase-badge ${fase}`;
+    }
+
+    function mostrarLobby() {
+      vistLobby.style.display = "flex";
+      vistPregunta.style.display = "none";
+    }
+
+    function mostrarPregunta() {
+      vistLobby.style.display = "none";
+      vistPregunta.style.display = "flex";
+    }
+
+    function renderOpciones(opciones, correcta = null) {
+      opcionesGrid.innerHTML = "";
+      (opciones || []).forEach(op => {
+        const div = document.createElement("div");
+        div.className = "opcion" + (correcta && op.letra === correcta ? " correcta" : "");
+        div.innerHTML = `
+          <div class="opcion-letra">${op.letra}</div>
+          <div class="opcion-txt">${op.texto}</div>
+        `;
+        opcionesGrid.appendChild(div);
+      });
+    }
+
+    function actualizarCupos(total, max) {
+      cuposTotal.textContent = total;
+      cuposMax.textContent   = max;
+      cuposFill.style.width  = max > 0 ? `${Math.min(100, (total / max) * 100)}%` : "0%";
+    }
+
+    function mostrarTurno(alias) {
+      turnoAlias.textContent = alias || "—";
+      turnoPanel.classList.remove("oculto");
+      turnoPanel.classList.add("anim-entrada");
+      resultadoBanner.style.display = "none";
+      sinRespuesta.style.display    = "none";
+      iniciarTimer();
+    }
+
+    function ocultarTurno() {
+      turnoPanel.classList.add("oculto");
+      detenerTimer();
+    }
+
+    function iniciarTimer() {
+      detenerTimer();
+      tiempoRestante = TIEMPO_RESPUESTA;
+      actualizarTimer(tiempoRestante);
+      timerInterval = setInterval(() => {
+        tiempoRestante--;
+        actualizarTimer(tiempoRestante);
+        if (tiempoRestante <= 0) detenerTimer();
+      }, 1000);
+    }
+
+    function detenerTimer() {
+      if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    }
+
+    function actualizarTimer(seg) {
+      const t = Math.max(0, seg);
+      timerNum.textContent = t;
+      const offset = CIRCUNFERENCIA * (1 - t / TIEMPO_RESPUESTA);
+      timerArc.style.strokeDashoffset = offset;
+      // Color: verde → naranja → rojo
+      const ratio = t / TIEMPO_RESPUESTA;
+      if (ratio > 0.5)      timerArc.style.stroke = "var(--green)";
+      else if (ratio > 0.25) timerArc.style.stroke = "#f97316";
+      else                   timerArc.style.stroke = "var(--red)";
+    }
+
+    function renderRanking(puntajes) {
+      if (!puntajes || puntajes.length === 0) {
+        rankingList.innerHTML = '<div class="ranking-empty">Sin puntajes aún</div>';
+        return;
+      }
+      $("sidebar-total").textContent = `${puntajes.length} jugador(es)`;
+      rankingList.innerHTML = puntajes.map(p => {
+        const medal = p.posicion === 1 ? "🥇" : p.posicion === 2 ? "🥈" : p.posicion === 3 ? "🥉" : p.posicion;
+        return `
+          <div class="ranking-item">
+            <span class="ranking-pos">${medal}</span>
+            <span class="ranking-alias">${p.alias}</span>
+            <span class="ranking-pts">${p.puntos.toLocaleString()}</span>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function resetVistaPregunta() {
+      ocultarTurno();
+      resultadoBanner.style.display = "none";
+      sinRespuesta.style.display    = "none";
+      actualizarCupos(0, 0);
+      opcionesGrid.innerHTML = "";
+    }
+
+    // ─── Socket.io ──────────────────────────────────────────────────────────
+    const socket = io();
+
+    socket.on("connect", () => {
+      conexionDot.classList.remove("desconectado");
+      conexionTxt.textContent = "Conectado";
+    });
+
+    socket.on("disconnect", () => {
+      conexionDot.classList.add("desconectado");
+      conexionTxt.textContent = "Sin conexión — reconectando…";
+      detenerTimer();
+    });
+
+    // Al conectarse (o reconectarse), el servidor envía el estado completo
+    socket.on("estado_actual", (data) => {
+      preguntaIndex = data.preguntaIndex ?? 0;
+      renderRanking(data.puntajes);
+      setFase(data.fase);
+
+      if (data.fase === "boton" && data.preguntaActual) {
+        mostrarPregunta();
+        pregNumero.textContent = `Pregunta ${preguntaIndex + 1}`;
+        pregTexto.textContent  = data.preguntaActual.texto;
+        renderOpciones(data.preguntaActual.opciones);
+
+        // Rehidratar cupos si los hay
+        if (data.cupos) actualizarCupos(data.cupos.total, data.cupos.max);
+
+        // Rehidratar turno si alguien está respondiendo
+        if (data.respondiendo) mostrarTurno(data.respondiendo.alias);
+
+      } else {
+        mostrarLobby();
+      }
+
+      // Actualizar contador de jugadores
+      totalJugadores.textContent = (data.puntajes || []).length;
+    });
+
+    // Alguien se une al juego
+    socket.on("jugador_unido", ({ total }) => {
+      totalJugadores.textContent = total;
+    });
+
+    // Host inicia una pregunta
+    socket.on("fase_boton", ({ pregunta, max }) => {
+      setFase("boton");
+      mostrarPregunta();
+      resetVistaPregunta();
+      pregNumero.textContent = `Pregunta ${preguntaIndex + 1}`;
+      pregTexto.textContent  = pregunta.texto;
+      actualizarCupos(0, max);
+      renderOpciones(pregunta.opciones);
+    });
+
+    // Alguien presionó el botón → actualizar cupos
+    socket.on("actualizar_cupos", ({ total, max }) => {
+      actualizarCupos(total, max);
+    });
+
+    // Le toca responder a alguien
+    socket.on("turno_respondiendo", ({ alias }) => {
+      setFase("respondiendo");
+      mostrarTurno(alias);
+    });
+
+    // Alguien respondió mal
+    socket.on("respuesta_incorrecta", ({ alias }) => {
+      // Solo feedback visual sutil; el turno pasará automáticamente
+      turnoAlias.textContent = `${alias} ✗ — siguiente…`;
+      detenerTimer();
+    });
+
+    // Se agotó el tiempo para quien respondía
+    socket.on("tiempo_agotado", ({ alias }) => {
+      turnoAlias.textContent = `${alias} ⏱ — tiempo agotado`;
+      detenerTimer();
+    });
+
+    // Resultado de la pregunta
+    socket.on("mostrar_resultado", (data) => {
+      setFase("resultado");
+      ocultarTurno();
+      renderRanking(data.puntajes);
+
+      if (data.correcto) {
+        // Revelar respuesta correcta en las opciones
+        const opcion = data.pregunta || {};
+        if (opcion.opciones) renderOpciones(opcion.opciones, data.correcta);
+
+        resultadoAlias.textContent = data.alias;
+        resultadoPts.textContent   = `+${data.puntosGanados.toLocaleString()} puntos`;
+        resultadoCorr.textContent  = `Respuesta correcta: ${data.correcta}`;
+        resultadoBanner.style.display = "flex";
+        sinRespuesta.style.display    = "none";
+      } else {
+        // Cola vacía, nadie respondió bien
+        // Revelar la respuesta correcta si viene en el payload
+        const opcion = data.pregunta || {};
+        if (opcion.opciones && opcion.correcta) renderOpciones(opcion.opciones, opcion.correcta);
+        sinRespuesta.style.display    = "block";
+        resultadoBanner.style.display = "none";
+      }
+    });
+
+    // Host pasa a la siguiente pregunta
+    socket.on("volver_lobby", ({ puntajes, preguntaIndex: idx }) => {
+      preguntaIndex = idx;
+      setFase("lobby");
+      mostrarLobby();
+      resetVistaPregunta();
+      renderRanking(puntajes);
+    });
+
+    // Host reinicia todo
+    socket.on("juego_reiniciado", () => {
+      preguntaIndex = 0;
+      setFase("lobby");
+      mostrarLobby();
+      resetVistaPregunta();
+      renderRanking([]);
+      totalJugadores.textContent = 0;
+    });
+  </script>
+</body>
+</html>

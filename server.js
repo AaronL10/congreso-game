@@ -11,15 +11,46 @@ const path = require("path");
 
 const app = express();
 const httpServer = http.createServer(app);
+
 const io = new Server(httpServer, {
   pingTimeout: 60000,
   pingInterval: 25000,
 });
 
+// CONFIG
 const PORT = process.env.PORT || 3000;
-const MAX_CUPOS = 20;         // cuántos pueden presionar el botón por pregunta
-const TIEMPO_RESPUESTA = 15;  // segundos para responder una vez que salís de la cola
+const MAX_CUPOS = 20;
+const TIEMPO_RESPUESTA = 15;
 
+// MIDDLEWARE (si usas frontend estático)
+app.use(express.static(path.join(__dirname, "public")));
+
+// RUTAS (ajusta si tus archivos están en otra carpeta)
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+app.get("/host", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "host.html"));
+});
+
+app.get("/pantalla", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "pantalla.html"));
+});
+
+// SOCKET.IO
+io.on("connection", (socket) => {
+  console.log("Usuario conectado:", socket.id);
+
+  socket.on("disconnect", () => {
+    console.log("Usuario desconectado:", socket.id);
+  });
+});
+
+
+httpServer.listen(PORT, () => {
+  console.log("Servidor en puerto " + PORT);
+});
 // ─── Estado Global ────────────────────────────────────────────────────────────
 let estado = {
   fase: "lobby",          // "lobby" | "boton" | "respondiendo" | "resultado" | "fin"
@@ -117,7 +148,14 @@ io.on("connection", (socket) => {
   // Sincronizar estado al conectarse
   socket.emit("estado_actual", {
     fase: estado.fase,
-    preguntaActual: estado.fase === "boton" ? { texto: estado.preguntaActual?.texto } : null, // no revelar respuesta
+    // Incluimos opciones para que pantalla.html pueda rehidratarse al reconectar
+    // durante una pregunta activa. correcta nunca se expone al cliente.
+    preguntaActual: estado.fase === "boton"
+      ? { texto: estado.preguntaActual?.texto, opciones: estado.preguntaActual?.opciones }
+      : null,
+    // Quién está respondiendo en este momento (útil si pantalla reconecta mid-turno)
+    respondiendo: estado.respondiendo ? { alias: estado.respondiendo.alias } : null,
+    cupos: { total: estado.cupos.length, max: MAX_CUPOS },
     puntajes: snapPuntajes(),
     totalPreguntas: estado.preguntas.length,
     preguntaIndex: estado.preguntaIndex,
